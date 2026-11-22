@@ -10,6 +10,9 @@ importers:
 
   client:
     dependencies:
+      '@asteroids/shared':
+        specifier: workspace:*
+        version: link:../shared
       three:
         specifier: ^0.187.0
         version: 0.187.0
