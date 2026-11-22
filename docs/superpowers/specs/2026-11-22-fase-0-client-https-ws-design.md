@@ -39,13 +39,14 @@ O M0 entrega a infraestrutura de cliente necessária para esse critério:
 | `client/package.json` | 1, 2, 3 | scaffold `@asteroids/client`; scripts `dev`/`build`/`preview`/`typecheck`/`test`; devDeps `vite`, `vitest`, `typescript`, `vite-plugin-mkcert`. |
 | `client/tsconfig.json` | 1 | estende `tsconfig.base.json` (strict + `noUncheckedIndexedAccess`, ES2022), `lib` DOM, `include` com `vite.config.ts`. |
 | `client/index.html` | 1 | entry `#app` + `<script type="module" src="/src/main.ts">`. |
-| `client/src/main.ts` | 1, 3 | mount strict-safe; status WS (`connecting` → `connected` → `hello received`; `error/closed`). |
+| `client/src/main.ts` | 1, 3 | mount strict-safe; status WS (`connecting` → `connected` → `hello received`; `error` / `closed`, com código e motivo do close no console). |
 | `client/src/style.css` | 1 | tema escuro responsivo, sem assets externos. |
-| `client/vitest.config.ts` | 1 | `environment: 'node'`, `passWithNoTests: true`. |
-| `client/vite.config.ts` | 2, 3 | `mkcert()`, `host 0.0.0.0`/`port 5173`/`strictPort`, preview 4173 e `server.proxy['/ws']` → `ws://localhost:8080`. |
+| `client/vitest.config.ts` | 1 | `environment: 'node'` (sem `passWithNoTests`: há testes desde a Task 3). |
+| `client/vite.config.ts` | 2, 3 | `mkcert()`, `host 0.0.0.0`/`port 5173`/`strictPort`, preview 4173 e `proxy['/ws']` → `ws://localhost:8080` em **dev e preview**. |
 | `client/src/ws-status.ts` | 3 | `buildWsUrl()` puro: `https:` → `wss://<host>/ws`, caso contrário `ws://<host>/ws`. |
 | `client/test/ws-status.test.ts` | 3 | 2 testes de `buildWsUrl`. |
 | `server/package.json`, `server/tsconfig.json`, `server/src/index.ts` | 3 | stub WS (`ws` + `tsx`) na porta 8080: `{"t":"hello"}` no connect, `{"t":"pong"}` no ping. |
+| `server/src/ws-server.ts`, `server/test/ws-server.test.ts` | fix wave | `createWebSocketServer()` com handlers de erro (`wss`, socket, porta em uso) e normalização de `RawData`; teste `node:test` do contrato hello/pong em porta efêmera. |
 | `package.json` | 3 | scripts de raiz `dev:client`, `dev:server`. |
 | `pnpm-lock.yaml` | 1–3 | resolução de `vite`, `vitest`, `vite-plugin-mkcert`, `ws`, `tsx`, `@types/*`. |
 | `README.md` | 2, 3, 4 | comandos, HTTPS/mkcert, WS/proxy, checklist manual US-02 (esta task). |
@@ -63,14 +64,37 @@ Ambiente: `pnpm@10.0.0`, Node `v24.19.0`, Windows. O wrapper do shell do harness
 | --- | --- | --- | --- |
 | `pnpm install` | PASS | **PASS** | `Scope: all 4 workspace projects` / `Already up to date` / `Done in 514ms`; `exit 0`. |
 | `pnpm -r typecheck` | PASS (shared + client + server) | **PASS** | `Scope: 3 of 4 workspace projects`; `client typecheck: Done`, `server typecheck: Done`, `shared typecheck: Done` (tsc `--noEmit`, sem erros/warnings); `exit 0`. |
-| `pnpm -r test` | PASS | **PASS** | `client`: 1 arquivo / **2 testes** passou (ws-status); `shared`: 5 arquivos / **46 testes** passou; `server`: `echo 'server stub: no tests yet'` (placeholder) — todos `Done`; `exit 0`. |
+| `pnpm -r test` | PASS | **PASS** | `client`: 1 arquivo / **2 testes** passou (ws-status); `shared`: 5 arquivos / **46 testes** passou; `server`: **1 teste** passou (contrato hello/pong, `node:test` via `tsx`) — todos `Done`; `exit 0`. |
 | `pnpm -C client build` | PASS | **PASS** | `tsc -p tsconfig.json --noEmit && vite build`; `✓ 5 modules transformed`; `dist/index.html 0.42 kB`, `dist/assets/index-*.css 0.52 kB`, `dist/assets/index-*.js 1.67 kB`; `✓ built in 97ms`; `exit 0`. |
 
 > A tabela registra **somente** comandos executados. Não há resultado declarado para
 > abertura em navegador/dispositivo, FPS ou qualquer validação ao vivo de HTTPS — esses itens
 > estão em §4 como `PENDENTE`.
 
-### 3.1 Evidência complementar já executada nas Tasks 2–3 (contexto, não reexecutada aqui)
+### 3.1 Fix wave da revisão final (2026-11-22)
+
+A revisão final da branch encontrou 2 findings *Important* e 4 *Minor*; a fix wave os
+endereçou e reexecutou as checagens automatizadas:
+
+| Comando | Resultado observado |
+| --- | --- |
+| `pnpm -C server test` | PASS — `node:test` via `tsx`: `hello on connect and pong on ping`, `tests 1 / pass 1 / fail 0`. |
+| `pnpm -r typecheck` | PASS — `client`, `server` e `shared` `Done` (sem erros/warnings). |
+| `pnpm -r test` | PASS — `client` 2/2, `shared` 46/46, `server` 1/1; todos os pacotes `Done`. |
+| `pnpm -C client build` | PASS — `✓ 5 modules transformed`, `✓ built in 213ms`. |
+
+Mudanças: handlers de `error` em `wss`/socket (com mensagem específica para `EADDRINUSE`),
+normalização de `RawData` antes do `JSON.parse`, `proxy['/ws']` também em `preview`, remoção
+do comentário/`passWithNoTests` obsoletos em `vitest.config.ts`, e distinção entre os estados
+`error` e `closed` no HUD (código/motivo no console). Detalhes em
+`.superpowers/sdd/2026-11-22-fase-0-client-https-ws/task-final-fix-report.md`.
+
+> O proxy de `preview` foi validado por tipagem, carregamento da config no `vite build` e
+> inspeção do código do Vite 5 (`preview()` aplica `proxyMiddleware(httpServer, config.preview.proxy,
+> config)`, que honra `ws: true`). Não foi exercitado em navegador pelo bloqueio da CA do mkcert
+> registrado em §7.1.
+
+### 3.2 Evidência complementar já executada nas Tasks 2–3 (contexto, não reexecutada aqui)
 
 Estes itens são registrados como **histórico** dos reports das tasks anteriores e **não** foram
 reexecutados nesta Task 4:
@@ -145,7 +169,7 @@ necessário para o WebSocket nos dispositivos — apenas a CA e o acesso à port
 | Aviso de certificado inválido no Android/Quest | `rootCA.pem` não instalado no dispositivo | Instale a CA conforme §5; confirme que a CA aparece na lista de certificados do usuário. |
 | `https://<IP-LAN>:5173` não carrega no dispositivo | PC e dispositivo em redes diferentes, ou IP mudou | Use `ipconfig` para obter o IP correto; garanta mesma LAN; reinicie o dev server para regerar o certificado com o IP atual. |
 | Conexão recusada na porta 5173 | Vite não iniciou (ex.: mkcert `-install` travou) ou firewall bloqueou | Confirme o log do Vite e o aceite da CA; libere a porta 5173 no firewall do Windows para a rede privada. O dev server usa `strictPort`, então outra porta não é usada automaticamente. |
-| Página abre mas status WS fica `error/closed` | Stub WS em 8080 não está rodando, ou proxy `/ws` falhou | Inicie `pnpm -C server dev` (porta 8080) **antes**/junto com `pnpm -C client dev`; confirme `ws://localhost:8080` responde `{t:"hello"}`. Verifique também a porta 8080 no firewall (apenas localhost, mas valide se houver regras restritivas). |
+| Página abre mas status WS fica `error` ou `closed` | Stub WS em 8080 não está rodando, ou proxy `/ws` falhou | Inicie `pnpm -C server dev` (porta 8080) **antes**/junto com `pnpm -C client dev`; confirme `ws://localhost:8080` responde `{t:"hello"}`. Verifique também a porta 8080 no firewall (apenas localhost, mas valide se houver regras restritivas). |
 | Vite diz que a porta 5173/4173 está em uso | Processo anterior não encerrado | Encerre o processo na porta (`netstat -ano | findstr :5173` e `taskkill /PID <pid> /F`) e reinicie. |
 | Erro de mixed content | Página aberta via `http://` em vez de `https://` | Use sempre `https://`; `buildWsUrl` gera `ws://` em HTTP, o que é bloqueado em páginas HTTPS (o contrário). |
 
@@ -154,7 +178,7 @@ necessário para o WebSocket nos dispositivos — apenas a CA e o acesso à port
 | # | Item DoD | Status | Justificativa |
 | --- | --- | --- | --- |
 | 1 | Compila sem warnings/erros TS strict | ✅ | `pnpm -r typecheck` e `pnpm -C client build` (`tsc --noEmit`) limpos; `strict` + `noUncheckedIndexedAccess` em `tsconfig.base.json`. |
-| 2 | Testes/checagens do pacote passam | ✅ | `pnpm -r test` (client 2/2, shared 46/46, server placeholder) e `pnpm -C client build` PASS; `pnpm install` estável. |
+| 2 | Testes/checagens do pacote passam | ✅ | `pnpm -r test` (client 2/2, shared 46/46, server 1/1) e `pnpm -C client build` PASS; `pnpm install` estável. |
 | 3 | Validação manual documentada | ✅ (documentada; **execução pendente**) | Checklist §4 com colunas exatas do brief; todas as células de dispositivo `PENDENTE` por bloqueio ambiental real (abaixo), sem resultados inventados. |
 
 ### 7.1 Bloqueio ambiental conhecido (não resolvido nesta task)

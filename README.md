@@ -47,7 +47,7 @@ pnpm -C client test       # Vitest (buildWsUrl + demais testes do cliente)
 pnpm -C server dev        # stub WebSocket em ws://localhost:8080 (tsx)
 pnpm -C server build      # tsc --noEmit (checagem; sem emissão nesta fase)
 pnpm -C server typecheck  # tsc --noEmit (strict + noUncheckedIndexedAccess)
-pnpm -C server test       # placeholder: sem testes nesta fase
+pnpm -C server test       # node:test via tsx: contrato hello/pong do stub WS
 ```
 
 ### Raiz do workspace (aplica o script a todos os pacotes via `pnpm -r`)
@@ -104,11 +104,14 @@ O stub em `server/src/index.ts` escuta em `ws://localhost:8080`. Ao conectar, en
 de desenvolvimento — sem netcode, física ou gameplay.
 
 O `client/vite.config.ts` expõe o stub na **mesma origem** da página via proxy:
-`/ws` → `ws://localhost:8080`, com `ws: true` e `changeOrigin: true`. A página usa
+`/ws` → `ws://localhost:8080`, com `ws: true` e `changeOrigin: true`. A mesma configuração
+de proxy vale para `dev` (5173) e `preview` (4173), para que ambos os comandos HTTPS
+documentados se comportem de forma idêntica. A página usa
 `buildWsUrl(window.location)` (`client/src/ws-status.ts`), que gera `wss://<host>/ws`
 em páginas HTTPS e `ws://<host>/ws` em HTTP — evitando mixed content e dispensando
 portas ou certificados adicionais nos dispositivos. O status aparece no HUD de texto:
-`connecting` → `connected` → `hello received` (ou `error/closed` em caso de falha).
+`connecting` → `connected` → `hello received` (ou `error` / `closed` em caso de falha;
+o código e o motivo do `close` são registrados no console).
 
 ### Verificação manual do WS
 
@@ -127,10 +130,11 @@ conectar em ws://localhost:8080 → recebe {"t":"hello"}
 enviar {"t":"ping"}             → recebe {"t":"pong"}
 ```
 
-> **Status de validação:** o contrato hello/pong do stub e o proxy `/ws` foram
-> verificados com clientes WS automatizados neste repositório. A exibição no navegador
-> e o teste em Android Chrome / Meta Quest Browser **não foram executados**: o diálogo
-> de confiança da CA do mkcert está bloqueado neste desktop (ver seção anterior).
+> **Status de validação:** o contrato hello/pong do stub é coberto por teste automatizado
+> (`pnpm -C server test`) e o proxy `/ws` foi verificado com cliente WS automatizado neste
+> repositório. A exibição no navegador e o teste em Android Chrome / Meta Quest Browser
+> **não foram executados**: o diálogo de confiança da CA do mkcert está bloqueado neste
+> desktop (ver seção anterior).
 
 ## Checklist manual US-02 (validação em dispositivos)
 
@@ -155,7 +159,7 @@ comandos): `docs/superpowers/specs/2026-11-22-fase-0-client-https-ws-design.md`.
 | --- | --- |
 | `pnpm install` | PASS — `Scope: all 4 workspace projects`, `Already up to date` |
 | `pnpm -r typecheck` | PASS — shared, server e client (`tsc --noEmit`, sem erros) |
-| `pnpm -r test` | PASS — client 2/2, shared 46/46, server placeholder |
+| `pnpm -r test` | PASS — client 2/2, shared 46/46, server 1/1 |
 | `pnpm -C client build` | PASS — `✓ 5 modules transformed`, `✓ built in 97ms` |
 
 ## Estrutura atual
@@ -172,17 +176,20 @@ shared/
   test/            # Vitest: constants, math, physics, collision, smoke
 client/
   index.html       # página de entrada
-  vite.config.ts   # HTTPS (mkcert), 0.0.0.0:5173 / preview 4173 + proxy /ws
+  vite.config.ts   # HTTPS (mkcert), 0.0.0.0:5173 / preview 4173 + proxy /ws em ambos
   src/
-    main.ts        # scaffold + status WS (connecting/connected/hello/error)
+    main.ts        # scaffold + status WS (connecting, connected, hello, error, closed)
     ws-status.ts   # buildWsUrl() — URL WS na mesma origem (wss para https)
     style.css
   test/ws-status.test.ts  # Vitest: buildWsUrl (https → wss, http → ws)
   vitest.config.ts
 server/
-  package.json     # ws + tsx (script dev)
+  package.json     # ws + tsx (scripts dev/test)
   tsconfig.json
-  src/index.ts     # stub WS: hello on connect, pong on ping (porta 8080)
+  src/
+    index.ts       # entry point: inicia o stub na porta 8080
+    ws-server.ts   # createWebSocketServer(): hello/pong + handlers de erro
+  test/ws-server.test.ts  # node:test: hello on connect, pong on ping (porta efêmera)
 ```
 
 `shared/` é isomórfico: não importa `three`, `window`, `document`, `fs` ou `crypto`, e não

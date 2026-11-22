@@ -50,9 +50,11 @@ socket.addEventListener('message', (event: MessageEvent<string>) => {
 });
 
 socket.addEventListener('error', () => {
-  wsStatus.textContent = 'WS: error/closed';
+  console.error('[ws] connection error');
+  wsStatus.textContent = 'WS: error';
 });
 
-socket.addEventListener('close', () => {
-  wsStatus.textContent = 'WS: error/closed';
+socket.addEventListener('close', (event: CloseEvent) => {
+  console.info(`[ws] closed: code=${event.code} reason=${event.reason || '(none)'}`);
+  wsStatus.textContent = 'WS: closed';
 });
