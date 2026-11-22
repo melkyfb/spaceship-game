@@ -34,6 +34,7 @@ const VIGNETTE_RENDER_ORDER = 999
  */
 export class CockpitRig {
   readonly root: THREE.Group
+  readonly pilotHeadRig: THREE.Group
   readonly camera: THREE.PerspectiveCamera
   readonly hudMesh: THREE.Mesh
   readonly crosshairGroup: THREE.Group
@@ -82,14 +83,14 @@ export class CockpitRig {
     muzzleRight.position.set(1.2, -0.4, -2.5)
     this.root.add(muzzleRight)
 
-    const pilotHeadRig = new THREE.Group()
-    pilotHeadRig.name = 'PilotHeadRig'
-    pilotHeadRig.position.set(0, 0.35, 0.4)
-    this.root.add(pilotHeadRig)
+    this.pilotHeadRig = new THREE.Group()
+    this.pilotHeadRig.name = 'PilotHeadRig'
+    this.pilotHeadRig.position.set(0, 0.35, 0.4)
+    this.root.add(this.pilotHeadRig)
 
     this.camera = new THREE.PerspectiveCamera(75, 1, 0.05, 1500)
     this.camera.name = 'Camera'
-    pilotHeadRig.add(this.camera)
+    this.pilotHeadRig.add(this.camera)
 
     this.camera.add(this.createComfortVignette())
   }

@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { CockpitRig } from './CockpitRig'
 import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield } from './Starfield'
+import { DesktopInput } from '../input/DesktopInput'
+import { InputManager } from '../input/InputManager'
 import { DiegeticHUD } from '../ui/DiegeticHUD'
 import { OffscreenPips } from '../ui/OffscreenPips'
 import type { Contact, HudState } from '../ui/hud-math'
@@ -11,6 +13,8 @@ const STARFIELD_SPIN_RAD_PER_SEC = 0.006
 /** Dados mock isolados para validar HUD/radar/pips (substituíveis por estado real). */
 const MOCK_CONTACT_COUNT = 8
 const MOCK_WAVE_SECONDS = 12
+const FREE_LOOK_MAX_YAW = 1.2
+const FREE_LOOK_MAX_PITCH = 0.8
 
 /** Bootstrap da cena Three.js: cena, câmera, renderer, loop e ciclo de vida. */
 export class GameApp {
@@ -28,6 +32,9 @@ export class GameApp {
   private readonly mockContacts: Contact[] = []
   private mockTime = 0
   private readonly clock = new THREE.Clock()
+  private readonly inputManager = new InputManager()
+  private readonly desktopInput = new DesktopInput()
+  private desktopInputAttached = false
   private running = false
   private disposed = false
 
@@ -56,6 +63,9 @@ export class GameApp {
     canvas.style.width = '100%'
     canvas.style.height = '100%'
     this.container.append(canvas)
+
+    this.inputManager.setAdapter(this.desktopInput)
+    this.syncDesktopInput(this.pipeline.getMode())
 
     // Iluminação mínima; brilho neste projeto vem de emissivos/Fresnel, não de bloom (ADR-04).
     this.scene.add(new THREE.AmbientLight(0x334466, 1))
@@ -93,6 +103,7 @@ export class GameApp {
   /** Seleção de modo (FLAT / VR_BOX / QUEST_3) — ver main.ts para a fonte da config. */
   async setRenderMode(mode: RenderMode): Promise<void> {
     await this.pipeline.setMode(mode)
+    this.syncDesktopInput(this.pipeline.getMode())
   }
 
   getRenderMode(): RenderMode {
@@ -114,6 +125,8 @@ export class GameApp {
     this.running = false
     this.renderer.setAnimationLoop(null)
     window.removeEventListener('resize', this.handleResize)
+    this.inputManager.dispose()
+    this.desktopInputAttached = false
     this.pipeline.dispose()
     this.hud.dispose()
     this.pips.dispose()
@@ -135,11 +148,50 @@ export class GameApp {
     if (this.disposed) return
     const dt = this.clock.getDelta()
     this.starfield.rotation.y += dt * STARFIELD_SPIN_RAD_PER_SEC
+    this.inputManager.update(dt)
+    this.applyFreeLook()
     this.cockpit.update(dt)
     this.updateMockState(dt)
     this.hud.update(this.mockState, dt)
     this.pips.update(this.mockContacts, this.camera, dt)
     this.pipeline.render(this.scene, this.camera)
+  }
+
+  getInputManager(): InputManager {
+    return this.inputManager
+  }
+
+  private syncDesktopInput(mode: RenderMode): void {
+    const shouldAttach = mode === 'FLAT' && !this.disposed
+    if (shouldAttach && !this.desktopInputAttached) {
+      this.desktopInput.attach(this.renderer.domElement)
+      this.desktopInputAttached = true
+      return
+    }
+    if (!shouldAttach && this.desktopInputAttached) {
+      this.desktopInput.detach()
+      this.desktopInputAttached = false
+      this.resetHeadLook()
+    }
+  }
+
+  private applyFreeLook(): void {
+    if (this.pipeline.getMode() !== 'FLAT') {
+      this.resetHeadLook()
+      return
+    }
+    const look = this.desktopInput.getFreeLookState()
+    if (!look.active) {
+      this.resetHeadLook()
+      return
+    }
+    this.cockpit.pilotHeadRig.rotation.y = -look.yaw * FREE_LOOK_MAX_YAW
+    this.cockpit.pilotHeadRig.rotation.x = -look.pitch * FREE_LOOK_MAX_PITCH
+  }
+
+  private resetHeadLook(): void {
+    this.cockpit.pilotHeadRig.rotation.x = 0
+    this.cockpit.pilotHeadRig.rotation.y = 0
   }
 
   /** Estado mínimo e determinístico; sem alocações no loop. */
