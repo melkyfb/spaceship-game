@@ -132,6 +132,32 @@ enviar {"t":"ping"}             → recebe {"t":"pong"}
 > e o teste em Android Chrome / Meta Quest Browser **não foram executados**: o diálogo
 > de confiança da CA do mkcert está bloqueado neste desktop (ver seção anterior).
 
+## Checklist manual US-02 (validação em dispositivos)
+
+Preenchido apenas com itens realmente executados; o que não foi executado está marcado como
+`PENDENTE`. Fonte autoritativa e detalhes (troubleshooting, passos mkcert, evidência dos
+comandos): `docs/superpowers/specs/2026-11-22-fase-0-client-https-ws-design.md`.
+
+| Dispositivo | URL | Certificado confiável | Página carregou | WS `/ws` conectou | Evidência/data | Observações |
+| --- | --- | --- | --- | --- | --- | --- |
+| PC (Windows, Chrome/Edge) | `https://localhost:5173` e `https://<IP-LAN>:5173` | `PENDENTE` | `PENDENTE` | `PENDENTE` | 2026-11-22 (Task 2) | Tentativa de `pnpm -C client dev`: CA criada em `%USERPROFILE%\.vite-plugin-mkcert\`, mas `mkcert -install` travou no *Aviso de Segurança* do Windows; Vite não escutou em 5173. Requer aceite humano da CA. |
+| Android Chrome | `https://<IP-LAN>:5173` | `PENDENTE` | `PENDENTE` | `PENDENTE` | 2026-11-22 | Não executado. Requer instalar `rootCA.pem` como CA no dispositivo e desktop com CA aceita. |
+| Meta Quest Browser | `https://<IP-LAN>:5173` | `PENDENTE` | `PENDENTE` | `PENDENTE` | 2026-11-22 | Não executado. Mesmo pré-requisito de CA do Android; fluxo de CA do Quest pode variar por versão do sistema. |
+
+> US-02 **não está validada em dispositivo**: o critério "sem alertas de certificado inválido"
+> depende de evidência real nessas linhas. Código, proxy e URL `wss://` estão prontos e cobertos
+> por checagens automatizadas; a abertura ao vivo está bloqueada pela confirmação interativa da
+> CA do mkcert neste desktop.
+
+### Verificação automatizada (executada em 2026-11-22)
+
+| Comando | Resultado |
+| --- | --- |
+| `pnpm install` | PASS — `Scope: all 4 workspace projects`, `Already up to date` |
+| `pnpm -r typecheck` | PASS — shared, server e client (`tsc --noEmit`, sem erros) |
+| `pnpm -r test` | PASS — client 2/2, shared 46/46, server placeholder |
+| `pnpm -C client build` | PASS — `✓ 5 modules transformed`, `✓ built in 97ms` |
+
 ## Estrutura atual
 
 ```
@@ -168,7 +194,9 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
 - Spec: `Documento Oficial de Projeto.pdf` (v3.0)
 - Plano da Fase 1: `docs/superpowers/plans/2026-11-22-fase-1-fisica-testes.md`
 - Design e verificação da Fase 1: `docs/superpowers/specs/2026-11-22-fase-1-fisica-testes-design.md`
-- Plano M0 (cliente HTTPS/WS): `.superpowers/sdd/2026-11-22-fase-0-client-https-ws/`
+- Plano M0 (cliente HTTPS/WS): `docs/superpowers/plans/2026-11-22-fase-0-client-https-ws.md`
+- Design e verificação M0 (HTTPS/WS + checklist US-02): `docs/superpowers/specs/2026-11-22-fase-0-client-https-ws-design.md`
+- SDD/ledger M0: `.superpowers/sdd/2026-11-22-fase-0-client-https-ws/`
 
 ## Próximos passos
 
