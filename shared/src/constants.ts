@@ -40,3 +40,16 @@ export const ASTEROID_TIERS = {
   MEDIUM: { radius: 7, hp: 30, speed: 20, score: 250, children: 2, nextTier: 'SMALL' },
   SMALL: { radius: 3, hp: 10, speed: 30, score: 500, children: 0, nextTier: null },
 } as const;
+
+export const WAVE_SPAWN_COSTS = {
+  LARGE: 3,
+  SCOUT: 3,
+  SCAVENGER: 2,
+  BRUISER: 6,
+} as const;
+
+export const WAVE_SPAWN_CONFIG = {
+  MIN_R: 280,
+  MAX_R: 420,
+  MIN_PLAYER_DIST: 120,
+} as const;
