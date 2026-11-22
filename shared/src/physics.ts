@@ -166,9 +166,13 @@ function cmdAxis(value: number): number {
 }
 
 /**
- * Avança a nave um passo fixo. Escreve somente nos arrays já existentes em
- * `state` — nenhuma alocação por tick. Ordem: sanitizar -> comandos ->
- * aceleração local->mundo -> fronteira -> integrar -> posição -> rotação.
+ * Avança a nave exatamente um passo fixo (ADR-06, FIXED_DT = 1/30s). Escreve
+ * somente nos arrays já existentes em `state` — nenhuma alocação por tick.
+ * Ordem: sanitizar -> comandos -> aceleração local->mundo -> fronteira ->
+ * integrar -> posição -> rotação.
+ *
+ * Contrato determinístico: o `dt` externo é ignorado; a simulação sempre usa
+ * FIXED_DT para manter integração, damping da fronteira e replay idênticos.
  *
  * Fora do escopo desta task (fica para a lógica de jogo): shield/energy,
  * cooldowns de tiro, colisões e tick de rede.
@@ -176,10 +180,10 @@ function cmdAxis(value: number): number {
 export function stepShip(
   state: ShipState,
   cmd: ShipCommand,
-  dt: number = FIXED_DT,
+  _dt: number = FIXED_DT,
 ): void {
-  // ADR-06: passo fixo; valores inválidos caem no padrão em vez de infectar o estado.
-  const h = isFiniteNumber(dt) && dt > 0 ? dt : FIXED_DT;
+  // ADR-06: passo fixo determinístico; dt externo é ignorado deliberadamente.
+  const h = FIXED_DT;
 
   // 1) saneamento do estado — NaN/Infinity não viram posição/rotação.
   const px = x3(state.pos), py = y3(state.pos), pz = z3(state.pos);

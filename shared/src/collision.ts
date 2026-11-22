@@ -19,10 +19,11 @@ const DAMAGE_SCALE = 0.45;
 
 /**
  * Raio efetivo do projétil no raio combinado `R_alvo + R_projétil` da spec 4.2.
- * Não há constante no spec para ele; 0.2 é o padding já usado nos testes de
- * swept da Task 3 (SMALL: 3 + 0.2 = 3.2).
+ * NÃO há constante no spec para ele; 0.2 é inferido (padding usado nos testes
+ * de swept da Task 3: SMALL 3 + 0.2 = 3.2). Mantido exportado/visível até o
+ * spec/F2 definir o valor oficial.
  */
-const PROJECTILE_RADIUS = 0.2;
+export const PROJECTILE_RADIUS = 0.2;
 /** Folga conservadora na broadphase para bordas de célula (a narrowphase é exata). */
 const QUERY_MARGIN = 1;
 
@@ -137,8 +138,13 @@ function rebuildAsteroidHash(asteroids: readonly AsteroidState[], padding: numbe
  * Detecta impactos de projéteis contra asteroide usando o segmento
  * `prevPos -> pos` (swept segment-to-sphere) — elimina tunelamento de lasers a
  * 240 u/s. Emite um evento por par projétil/asteroide que cruza o raio
- * efetivo. Não destrói o projétil nem aplica dano: isso pertence à lógica de
- * jogo (F2); o `damage` do evento é 0 por definição nesta resolução.
+ * efetivo.
+ *
+ * Contrato: o resolver só detecta e emite eventos (`damage` é 0; dano de tiro é
+ * da lógica de jogo, F2). Ele NÃO consome/muta projéteis — o chamador deve
+ * remover/consumir o projétil ao processar o evento. Projéteis com `ttl <= 0`
+ * ou coordenadas não finitas são ignorados; asteroides com coordenadas não
+ * finitas são ignorados na narrowphase.
  */
 export function resolveProjectileAsteroidCollisions(
   projectiles: readonly ProjectileState[],
@@ -151,6 +157,7 @@ export function resolveProjectileAsteroidCollisions(
   for (let i = 0; i < projectiles.length; i++) {
     const p = projectiles[i];
     if (p === undefined) continue;
+    if (!isFiniteNumber(p.ttl) || p.ttl <= 0) continue;
 
     const ax = p.prevPos[0] ?? 0;
     const ay = p.prevPos[1] ?? 0;
@@ -158,6 +165,10 @@ export function resolveProjectileAsteroidCollisions(
     const bx = p.pos[0] ?? 0;
     const by = p.pos[1] ?? 0;
     const bz = p.pos[2] ?? 0;
+    if (
+      !isFiniteNumber(ax) || !isFiniteNumber(ay) || !isFiniteNumber(az) ||
+      !isFiniteNumber(bx) || !isFiniteNumber(by) || !isFiniteNumber(bz)
+    ) continue;
 
     SCRATCH_CENTER[0] = (ax + bx) * 0.5;
     SCRATCH_CENTER[1] = (ay + by) * 0.5;
@@ -193,8 +204,16 @@ export function resolveProjectileAsteroidCollisions(
  * Resolve nave vs asteroide com swept sphere-to-sphere (movimento relativo),
  * dano `max(5, 0.45*vrel)` no escudo e rebote elástico parcial `e = 0.6` com
  * massas `M ∝ R³` (a constante de proporcionalidade cancela no impulso).
- * Velocidades locais são reutilizadas a cada candidato para que colisões
- * múltiplas no mesmo tick sejam aplicadas sequencialmente.
+ *
+ * Contrato de tick: o resolver opera sobre o estado no início do tick fixo
+ * (FIXED_DT) e emite eventos com `t` em [0,1] relativo ao tick. Ele muta
+ * `ship.vel`, `ship.shield` e `asteroid.vel`, mas NÃO integra `ship.pos` —
+ * o chamador deve integrar posição/reconciliação no passo de física do tick.
+ * Para múltiplos candidatos, escolhe o impacto mais cedo (menor `t`), aplica
+ * o rebote, avança a origem do sweep até o contato + pequena separação e
+ * repete com o tempo restante. Isso reduz penetração residual e dependência
+ * de ordem do hash. Estados com coordenadas/velocidades não finitas são
+ * ignorados.
  */
 export function resolveShipAsteroidCollisions(
   ships: readonly ShipState[],
@@ -206,28 +225,73 @@ export function resolveShipAsteroidCollisions(
 
   for (let i = 0; i < ships.length; i++) {
     const s = ships[i];
-    if (s === undefined) continue;
+    if (s === undefined || s.alive === false) continue;
 
-    const px = s.pos[0] ?? 0;
-    const py = s.pos[1] ?? 0;
-    const pz = s.pos[2] ?? 0;
+    const p0x = s.pos[0] ?? 0;
+    const p0y = s.pos[1] ?? 0;
+    const p0z = s.pos[2] ?? 0;
     let vx = s.vel[0] ?? 0;
     let vy = s.vel[1] ?? 0;
     let vz = s.vel[2] ?? 0;
+    if (
+      !isFiniteNumber(p0x) || !isFiniteNumber(p0y) || !isFiniteNumber(p0z) ||
+      !isFiniteNumber(vx) || !isFiniteNumber(vy) || !isFiniteNumber(vz)
+    ) continue;
 
-    const dx = vx * FIXED_DT;
-    const dy = vy * FIXED_DT;
-    const dz = vz * FIXED_DT;
-    SCRATCH_CENTER[0] = px + dx * 0.5;
-    SCRATCH_CENTER[1] = py + dy * 0.5;
-    SCRATCH_CENTER[2] = pz + dz * 0.5;
-    const queryRadius = Math.hypot(dx, dy, dz) * 0.5 + QUERY_MARGIN;
+    let px = p0x;
+    let py = p0y;
+    let pz = p0z;
+    let dtRemaining = FIXED_DT;
+    let elapsed = 0;
+
+    // Query ampla o bastante para o caminho completo do tick.
+    const fullDx = vx * FIXED_DT;
+    const fullDy = vy * FIXED_DT;
+    const fullDz = vz * FIXED_DT;
+    SCRATCH_CENTER[0] = p0x + fullDx * 0.5;
+    SCRATCH_CENTER[1] = p0y + fullDy * 0.5;
+    SCRATCH_CENTER[2] = p0z + fullDz * 0.5;
+    const queryRadius = Math.hypot(fullDx, fullDy, fullDz) * 0.5 + SHIP_CONFIG.RADIUS + QUERY_MARGIN;
     HASH.query(SCRATCH_CENTER, queryRadius, CANDIDATES);
 
-    for (let c = 0; c < CANDIDATES.length; c++) {
-      const idx = CANDIDATES[c] as number;
-      const a = asteroids[idx];
-      if (a === undefined) continue;
+    for (let iter = 0; iter < CANDIDATES.length && dtRemaining > 1e-9; iter++) {
+      let bestIdx = -1;
+      let bestT = 2;
+      let bestNx = 0;
+      let bestNy = 0;
+      let bestNz = 0;
+
+      for (let c = 0; c < CANDIDATES.length; c++) {
+        const idx = CANDIDATES[c] as number;
+        const a = asteroids[idx];
+        if (a === undefined) continue;
+
+        const ax = a.pos[0] ?? 0;
+        const ay = a.pos[1] ?? 0;
+        const az = a.pos[2] ?? 0;
+        const avx = a.vel[0] ?? 0;
+        const avy = a.vel[1] ?? 0;
+        const avz = a.vel[2] ?? 0;
+        if (
+          !isFiniteNumber(ax) || !isFiniteNumber(ay) || !isFiniteNumber(az) ||
+          !isFiniteNumber(avx) || !isFiniteNumber(avy) || !isFiniteNumber(avz)
+        ) continue;
+
+        const r = SHIP_CONFIG.RADIUS + asteroidRadius(a);
+        sweptSphereSphere(px, py, pz, vx, vy, vz, ax, ay, az, avx, avy, avz, r, dtRemaining, HIT);
+        if (!HIT.hit) continue;
+        if (HIT.t < bestT) {
+          bestT = HIT.t;
+          bestIdx = idx;
+          bestNx = HIT.nx;
+          bestNy = HIT.ny;
+          bestNz = HIT.nz;
+        }
+      }
+
+      if (bestIdx < 0) break;
+      const a = asteroids[bestIdx];
+      if (a === undefined) break;
 
       const ax = a.pos[0] ?? 0;
       const ay = a.pos[1] ?? 0;
@@ -235,15 +299,29 @@ export function resolveShipAsteroidCollisions(
       const avx = a.vel[0] ?? 0;
       const avy = a.vel[1] ?? 0;
       const avz = a.vel[2] ?? 0;
-      const r = SHIP_CONFIG.RADIUS + asteroidRadius(a);
 
-      sweptSphereSphere(px, py, pz, vx, vy, vz, ax, ay, az, avx, avy, avz, r, FIXED_DT, HIT);
-      if (!HIT.hit) continue;
-
-      // Velocidade relativa nave - asteroide (antes do impacto).
       const vxBefore = vx;
       const vyBefore = vy;
       const vzBefore = vz;
+      const adv = bestT * dtRemaining;
+      const impactX = px + vxBefore * adv;
+      const impactY = py + vyBefore * adv;
+      const impactZ = pz + vzBefore * adv;
+      const sep = 1e-4;
+
+      // t~0 no sub-sweep: sobreposição residual já tratada; separa e avança
+      // sem aplicar dano/rebote duplicado.
+      if (adv < 1e-8) {
+        const step = Math.min(1e-5, dtRemaining);
+        px = impactX + bestNx * sep + vx * step;
+        py = impactY + bestNy * sep + vy * step;
+        pz = impactZ + bestNz * sep + vz * step;
+        elapsed += step;
+        dtRemaining -= step;
+        if (dtRemaining < 0) dtRemaining = 0;
+        continue;
+      }
+
       const rvx = vxBefore - avx;
       const rvy = vyBefore - avy;
       const rvz = vzBefore - avz;
@@ -251,11 +329,7 @@ export function resolveShipAsteroidCollisions(
       const damage = Math.max(DAMAGE_FLOOR, DAMAGE_SCALE * vrel);
       s.shield = Math.max(0, finiteOrZero(s.shield) - damage);
 
-      // A normal aponta do asteroide para a nave; vn < 0 = aproximação.
-      const nx = HIT.nx;
-      const ny = HIT.ny;
-      const nz = HIT.nz;
-      const vn = rvx * nx + rvy * ny + rvz * nz;
+      const vn = rvx * bestNx + rvy * bestNy + rvz * bestNz;
       if (vn < 0) {
         const m2 = asteroidRadius(a) ** 3;
         const invMassSum = 1 / SHIP_MASS + 1 / m2;
@@ -263,25 +337,30 @@ export function resolveShipAsteroidCollisions(
         const jShip = j / SHIP_MASS;
         const jAst = j / m2;
 
-        vx += jShip * nx;
-        vy += jShip * ny;
-        vz += jShip * nz;
+        vx += jShip * bestNx;
+        vy += jShip * bestNy;
+        vz += jShip * bestNz;
         s.vel[0] = vx;
         s.vel[1] = vy;
         s.vel[2] = vz;
 
-        a.vel[0] = avx - jAst * nx;
-        a.vel[1] = avy - jAst * ny;
-        a.vel[2] = avz - jAst * nz;
+        a.vel[0] = avx - jAst * bestNx;
+        a.vel[1] = avy - jAst * bestNy;
+        a.vel[2] = avz - jAst * bestNz;
       }
 
-      const t = HIT.t;
+      const hitT = elapsed / FIXED_DT + adv / FIXED_DT;
       outEvents.push(
-        'SHIP_ASTEROID', s.id, a.id, t, damage,
-        px + vxBefore * FIXED_DT * t,
-        py + vyBefore * FIXED_DT * t,
-        pz + vzBefore * FIXED_DT * t,
+        'SHIP_ASTEROID', s.id, a.id, hitT, damage,
+        impactX, impactY, impactZ,
       );
+
+      px = impactX + bestNx * sep;
+      py = impactY + bestNy * sep;
+      pz = impactZ + bestNz * sep;
+      elapsed += adv;
+      dtRemaining -= adv;
+      if (dtRemaining < 0) dtRemaining = 0;
     }
   }
 }

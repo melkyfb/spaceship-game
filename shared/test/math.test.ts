@@ -51,6 +51,24 @@ describe('swept collision (continuous)', () => {
     expect(hit.t).toBeLessThanOrEqual(1)
     expect(hit.ny).toBeLessThan(0) // normal points from asteroid center toward the ship path (y = -5)
   })
+
+  it('returns no hit for NaN/Infinity swept inputs', () => {
+    const nanHit = sweptSegmentSphere(NaN, 0, 0, 4, 0, 0, 0, 0, 0, 3)
+    expect(nanHit.hit).toBe(false)
+    expect(nanHit.t).toBe(0)
+    expect(nanHit.nx).toBe(0)
+    expect(nanHit.ny).toBe(0)
+    expect(nanHit.nz).toBe(0)
+
+    expect(sweptSegmentSphere(-4, 0, 0, Infinity, 0, 0, 0, 0, 0, 3).hit).toBe(false)
+    expect(sweptSegmentSphere(-4, 0, 0, 4, 0, 0, 0, 0, 0, NaN).hit).toBe(false)
+
+    const badDt = sweptSphereSphere(0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 5, NaN)
+    expect(badDt.hit).toBe(false)
+    expect(badDt.t).toBe(0)
+    expect(sweptSphereSphere(0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 5, Infinity).hit).toBe(false)
+    expect(sweptSphereSphere(NaN, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 5, 1 / 30).hit).toBe(false)
+  })
 })
 
 describe('SpatialHash3D', () => {
@@ -84,6 +102,27 @@ describe('SpatialHash3D', () => {
     const out: number[] = []
     h.clear()
     h.query([0, 0, 0], 3, out)
+    expect(out).toEqual([])
+  })
+
+  it('ignores non-finite pos/radius without hanging or corrupting results', () => {
+    const h = new SpatialHash3D(40)
+    h.insert(1, [0, 0, 0], 3)
+
+    const out: number[] = [99]
+    h.insert(2, [NaN, 0, 0], 3)
+    h.insert(3, [0, Infinity, 0], 3)
+    h.insert(4, [0, 0, 0], Infinity)
+    h.insert(5, [0, 0, 0], NaN)
+    h.query([0, 0, 0], 3, out)
+    expect(out).toEqual([1])
+
+    out.push(42)
+    h.query([NaN, 0, 0], 3, out)
+    expect(out).toEqual([])
+    h.query([0, 0, 0], Infinity, out)
+    expect(out).toEqual([])
+    h.query([0, 0, 0], NaN, out)
     expect(out).toEqual([])
   })
 })

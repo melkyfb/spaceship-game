@@ -57,6 +57,9 @@ export class SpatialHash3D {
   readonly cellSize: number;
   private readonly cells = new Map<number, number[]>();
   private generation = 0;
+  // Dedup por geração: cresce com churn de ids. No uso do simulador os ids são
+  // densos/estáveis por tick; para callers genéricos de longa duração, considere
+  // recriar o hash periodicamente se o conjunto de ids variar muito.
   private readonly lastSeen = new Map<number, number>();
 
   constructor(cellSize = 40) {
@@ -76,6 +79,7 @@ export class SpatialHash3D {
     const py = coord(pos, 1);
     const pz = coord(pos, 2);
     const cs = this.cellSize;
+    if (!isFiniteNumber(radius) || !isFiniteNumber(px) || !isFiniteNumber(py) || !isFiniteNumber(pz)) return;
     const r = radius > 0 ? radius : 0;
 
     const minX = Math.floor((px - r) / cs);
@@ -111,6 +115,7 @@ export class SpatialHash3D {
     const py = coord(pos, 1);
     const pz = coord(pos, 2);
     const cs = this.cellSize;
+    if (!isFiniteNumber(radius) || !isFiniteNumber(px) || !isFiniteNumber(py) || !isFiniteNumber(pz)) return out;
     const r = radius > 0 ? radius : 0;
 
     const minX = Math.floor((px - r) / cs);
@@ -156,6 +161,20 @@ export function sweptSegmentSphere(
   r: number,
   out: HitResult = SCRATCH_HIT,
 ): HitResult {
+  if (
+    !isFiniteNumber(ax) || !isFiniteNumber(ay) || !isFiniteNumber(az) ||
+    !isFiniteNumber(bx) || !isFiniteNumber(by) || !isFiniteNumber(bz) ||
+    !isFiniteNumber(cx) || !isFiniteNumber(cy) || !isFiniteNumber(cz) ||
+    !isFiniteNumber(r)
+  ) {
+    out.hit = false;
+    out.t = 0;
+    out.nx = 0;
+    out.ny = 0;
+    out.nz = 0;
+    return out;
+  }
+
   const dx = bx - ax;
   const dy = by - ay;
   const dz = bz - az;
@@ -207,13 +226,16 @@ export function sweptSegmentSphere(
   return out;
 }
 
+/** Passo fixo padrão para sweeps (espelha WORLD_CONFIG.FIXED_TICK_RATE = 30). */
+const DEFAULT_SWEEP_DT = 1 / 30;
+
 /**
  * Colisão contínua de esfera contra esfera (nave vs asteroide).
  *
  * Reduz a movimento relativo: a esfera 1 percorre, em `dt`, o segmento
  * P1 -> P1 + (V1 - V2) * dt contra uma esfera estacionária em P2 com raio
  * combinado `r` (= r nave + r asteroide). Velocidades em u/s, `dt` em segundos
- * (padrão = FIXED_DT = 1/30, do spec).
+ * (padrão = DEFAULT_SWEEP_DT = 1/30, mesmo passo fixo do spec).
  */
 export function sweptSphereSphere(
   p1x: number, p1y: number, p1z: number,
@@ -221,9 +243,17 @@ export function sweptSphereSphere(
   p2x: number, p2y: number, p2z: number,
   v2x: number, v2y: number, v2z: number,
   r: number,
-  dt = 1 / 30,
+  dt: number = DEFAULT_SWEEP_DT,
   out: HitResult = SCRATCH_HIT,
 ): HitResult {
+  if (!isFiniteNumber(dt) || dt <= 0) {
+    out.hit = false;
+    out.t = 0;
+    out.nx = 0;
+    out.ny = 0;
+    out.nz = 0;
+    return out;
+  }
   const dx = (v1x - v2x) * dt;
   const dy = (v1y - v2y) * dt;
   const dz = (v1z - v2z) * dt;

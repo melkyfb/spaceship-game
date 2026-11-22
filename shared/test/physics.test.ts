@@ -215,6 +215,22 @@ describe('stepShip', () => {
     expect(a.angVel).toEqual(b.angVel)
   })
 
+  it('ignores external dt and always simulates at FIXED_DT (ADR-06)', () => {
+    const a = makeShipState()
+    const b = makeShipState()
+    const c = makeShipState()
+    const cmd = makeCommand(1, { thrust: 1, yaw: 0.5, boost: true })
+    stepShip(a, cmd)
+    stepShip(b, cmd, 1 / 60)
+    stepShip(c, cmd, 999)
+    expect(a.pos).toEqual(b.pos)
+    expect(a.vel).toEqual(b.vel)
+    expect(a.rot).toEqual(b.rot)
+    expect(a.angVel).toEqual(b.angVel)
+    expect(a.pos).toEqual(c.pos)
+    expect(a.vel).toEqual(c.vel)
+  })
+
   it('boosting outward at boundary does not escape hard limit', () => {
     const s = makeShipState()
     // voltar a nave para +X (frente local -Z -> +X) e empurrar para fora

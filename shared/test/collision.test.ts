@@ -90,6 +90,16 @@ describe('resolveProjectileAsteroidCollisions (swept segment-to-sphere)', () => 
     expect(events.count).toBe(1)
     expect(events.get(0)?.bId).toBe(near.id)
   })
+
+  it('ignores consumed projectiles (ttl <= 0)', () => {
+    const projectile = makeLaser(1, [-4, 0, 0], [4, 0, 0])
+    projectile.ttl = 0
+    const asteroid = makeAsteroid(2, 'SMALL', [0, 0, 0])
+    const events = new CollisionEventBuffer()
+
+    resolveProjectileAsteroidCollisions([projectile], [asteroid], events)
+    expect(events.count).toBe(0)
+  })
 })
 
 describe('resolveShipAsteroidCollisions (swept sphere-to-sphere)', () => {
@@ -151,6 +161,45 @@ describe('resolveShipAsteroidCollisions (swept sphere-to-sphere)', () => {
     expect(events.get(0)?.damage).toBe(5)
     expect(ship.shield).toBe(95)
   })
+
+  it('resolves multi-asteroid overlap deterministically by earliest impact', () => {
+    const speed = 240 // 8u per FIXED_DT
+    const ship = makeShip('s', [-10, 0, 0], [speed, 0, 0])
+    const near = makeAsteroid(1, 'SMALL', [-6, 0, 0]) // deepest penetration at t=0.5
+    const far = makeAsteroid(2, 'SMALL', [0, 0, 0])   // on same path
+    const events = new CollisionEventBuffer()
+
+    resolveShipAsteroidCollisions([ship], [near, far], events)
+
+    expect(events.count).toBeGreaterThanOrEqual(1)
+    for (let i = 0; i < events.count; i++) {
+      const e = events.get(i)
+      if (!e) throw new Error('missing event')
+      expect(e.kind).toBe('SHIP_ASTEROID')
+      expect(e.t).toBeGreaterThanOrEqual(0)
+      expect(e.t).toBeLessThanOrEqual(1)
+      expect(Number.isFinite(e.damage)).toBe(true)
+      expect(Number.isFinite(e.x)).toBe(true)
+    }
+    // Earliest hit in the path should be the nearer asteroid.
+    expect(events.get(0)?.bId).toBe(near.id)
+    if (events.count > 1) {
+      expect((events.get(0)?.t ?? 1)).toBeLessThanOrEqual(events.get(1)?.t ?? 0)
+    }
+    expect(ship.shield).toBeLessThan(100)
+    expect(ship.shield).toBeGreaterThanOrEqual(0)
+    expect(ship.vel.every(Number.isFinite)).toBe(true)
+
+    // Deterministic: same setup produces same result.
+    const ship2 = makeShip('s', [-10, 0, 0], [speed, 0, 0])
+    const near2 = makeAsteroid(1, 'SMALL', [-6, 0, 0])
+    const far2 = makeAsteroid(2, 'SMALL', [0, 0, 0])
+    const events2 = new CollisionEventBuffer()
+    resolveShipAsteroidCollisions([ship2], [near2, far2], events2)
+    expect(events2.count).toBe(events.count)
+    expect(ship2.shield).toBe(ship.shield)
+    expect(ship2.vel).toEqual(ship.vel)
+  })
 })
 
 describe('CollisionEventBuffer (zero-alloc event storage)', () => {
@@ -194,5 +243,48 @@ describe('CollisionEventBuffer (zero-alloc event storage)', () => {
     expect(events.count).toBe(2)
     expect(events.get(0)?.kind).toBe('PROJECTILE_ASTEROID')
     expect(events.get(1)?.kind).toBe('SHIP_ASTEROID')
+  })
+})
+
+describe('non-finite state safety', () => {
+  it('ignores projectiles with NaN/Infinity coordinates', () => {
+    const asteroid = makeAsteroid(1, 'SMALL', [0, 0, 0])
+    const events = new CollisionEventBuffer()
+    const bad = makeLaser(1, [NaN, 0, 0], [4, 0, 0])
+    bad.prevPos = [NaN, 0, 0]
+    const bad2 = makeLaser(2, [-4, 0, 0], [Infinity, 0, 0])
+
+    resolveProjectileAsteroidCollisions([bad, bad2], [asteroid], events)
+    expect(events.count).toBe(0)
+  })
+
+  it('ignores asteroids with NaN/Infinity coordinates in collision resolvers', () => {
+    const projectile = makeLaser(1, [-4, 0, 0], [4, 0, 0])
+    const badAsteroid = makeAsteroid(2, 'SMALL', [0, 0, 0])
+    badAsteroid.pos = [NaN, 0, 0]
+    const events = new CollisionEventBuffer()
+
+    resolveProjectileAsteroidCollisions([projectile], [badAsteroid], events)
+    expect(events.count).toBe(0)
+
+    const ship = makeShip('s', [-5, 0, 0], [2, 0, 0])
+    const shipEvents = new CollisionEventBuffer()
+    resolveShipAsteroidCollisions([ship], [badAsteroid], shipEvents)
+    expect(shipEvents.count).toBe(0)
+    expect(ship.shield).toBe(100)
+  })
+
+  it('ignores ships with NaN/Infinity state without poisoning events', () => {
+    const asteroid = makeAsteroid(1, 'SMALL', [0, 0, 0])
+    const ship = makeShip('s', [NaN, 0, 0], [100, 0, 0])
+    ship.pos = [NaN, 0, 0]
+    const ship2 = makeShip('s2', [-5, 0, 0], [Infinity, 0, 0])
+    ship2.vel = [Infinity, 0, 0]
+    const events = new CollisionEventBuffer()
+
+    resolveShipAsteroidCollisions([ship, ship2], [asteroid], events)
+    expect(events.count).toBe(0)
+    expect(ship.shield).toBe(100)
+    expect(ship2.shield).toBe(100)
   })
 })
