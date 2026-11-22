@@ -1,4 +1,5 @@
 import type { ShipCommand } from '@asteroids/shared'
+import { clampAxis } from './input-math'
 import type { InputAdapter, InputState } from './types'
 
 function createNeutralState(): InputState {
@@ -23,6 +24,7 @@ export class InputManager {
     if (this.adapter === adapter) return
     this.adapter?.dispose()
     this.adapter = adapter
+    this.resetState()
   }
 
   update(dt: number): void {
@@ -30,15 +32,16 @@ export class InputManager {
     if (!adapter) return
     adapter.update(dt)
     const next = adapter.getState()
-    this.state.thrust = next.thrust
-    this.state.strafeX = next.strafeX
-    this.state.strafeY = next.strafeY
-    this.state.yaw = next.yaw
-    this.state.pitch = next.pitch
-    this.state.roll = next.roll
-    this.state.firePrimary = next.firePrimary
-    this.state.fireSecondary = next.fireSecondary
-    this.state.boost = next.boost
+    // Defensively sanitize adapter output to preserve ShipCommand invariants.
+    this.state.thrust = clampAxis(next.thrust)
+    this.state.strafeX = clampAxis(next.strafeX)
+    this.state.strafeY = clampAxis(next.strafeY)
+    this.state.yaw = clampAxis(next.yaw)
+    this.state.pitch = clampAxis(next.pitch)
+    this.state.roll = clampAxis(next.roll)
+    this.state.firePrimary = next.firePrimary === true
+    this.state.fireSecondary = next.fireSecondary === true
+    this.state.boost = next.boost === true
   }
 
   getCommand(tick: number): ShipCommand {

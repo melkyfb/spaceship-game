@@ -209,5 +209,19 @@ describe('QuestXRInput', () => {
     // shield damage safe no-op API
     expect(() => input.pulseShieldDamage()).not.toThrow()
   })
+
+  it('pulses shield damage haptics with expected intensity and duration', () => {
+    const pulse = vi.fn()
+    const session = createMockXRSession([
+      makeXRSource('left', makeXRGamepad({ hapticActuators: [{ pulse }] })),
+      makeXRSource('right', makeXRGamepad()),
+    ])
+    const input = new QuestXRInput()
+    input.attach(session as any)
+
+    input.pulseShieldDamage()
+
+    expect(pulse).toHaveBeenCalledWith(0.85, 150)
+  })
 })
 

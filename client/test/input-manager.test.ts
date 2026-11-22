@@ -93,4 +93,41 @@ describe('InputManager', () => {
     manager.update(0)
     expect(manager.getCommand(1).thrust).toBe(-1)
   })
+
+  it('resets command to neutral when adapter changes before next update', () => {
+    const manager = new InputManager()
+    const a = makeAdapter({
+      thrust: 1,
+      strafeX: -0.5,
+      strafeY: 0.25,
+      yaw: 0.1,
+      pitch: -0.2,
+      roll: 0.3,
+      firePrimary: true,
+      fireSecondary: true,
+      boost: true,
+    })
+    const b = makeAdapter({ thrust: -1 })
+
+    manager.setAdapter(a)
+    manager.update(1 / 60)
+    expect(manager.getCommand(7).thrust).toBe(1)
+
+    manager.setAdapter(b)
+    expect(manager.getCommand(8)).toEqual({
+      tick: 8,
+      thrust: 0,
+      strafeX: 0,
+      strafeY: 0,
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
+      firePrimary: false,
+      fireSecondary: false,
+      boost: false,
+    })
+
+    manager.update(1 / 60)
+    expect(manager.getCommand(9).thrust).toBe(-1)
+  })
 })

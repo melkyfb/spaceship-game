@@ -244,6 +244,25 @@ export class GameApp {
 
     if (!isCurrent()) return
 
+    // Detach adapters that do not belong to the target mode before any early return.
+    if (!shouldAttachQuestXr && this.questXrSessionAttached) {
+      this.questXrInput.detach()
+      this.questXrSessionAttached = false
+    }
+
+    if (!shouldAttachVRBox && this.vrBoxInputAttached) {
+      try {
+        await this.vrBoxInput.detach()
+      } catch {
+        // ignore
+      }
+      if (!isCurrent()) return
+      this.vrBoxInputAttached = false
+      this.resetHeadLook()
+    }
+
+    if (!isCurrent()) return
+
     // Attach VR Box input when entering VR_BOX.
     if (shouldAttachVRBox && !this.vrBoxInputAttached) {
       this.inputManager.setAdapter(this.vrBoxInput)
@@ -266,20 +285,6 @@ export class GameApp {
       return
     }
 
-    // Detach VR Box input when leaving VR_BOX.
-    if (!shouldAttachVRBox && this.vrBoxInputAttached) {
-      try {
-        await this.vrBoxInput.detach()
-      } catch {
-        // ignore
-      }
-      if (!isCurrent()) return
-      this.vrBoxInputAttached = false
-      this.resetHeadLook()
-    }
-
-    if (!isCurrent()) return
-
     if (shouldAttachQuestXr) {
       this.inputManager.setAdapter(this.questXrInput)
       const session = this.pipeline.getActiveXrSession()
@@ -292,11 +297,6 @@ export class GameApp {
       }
       this.resetHeadLook()
       return
-    }
-
-    if (this.questXrSessionAttached) {
-      this.questXrInput.detach()
-      this.questXrSessionAttached = false
     }
 
     if (!shouldAttachFlat && !shouldAttachVRBox) {

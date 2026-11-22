@@ -109,7 +109,6 @@ export class VRBoxInput implements InputAdapter {
     if (!this.attached) return
     this.attached = false
     this.detachDeviceOrientation()
-    await this.releaseWakeLock()
     this.hideWizard()
     this.resetState()
     this.status.fullscreen = 'idle'
@@ -118,6 +117,7 @@ export class VRBoxInput implements InputAdapter {
     this.status.deviceOrientation = 'idle'
     this.status.gamepad = 'none'
     this.status.wizardStep = 0
+    await this.releaseWakeLock()
   }
 
   update(_dt: number): void {
