@@ -1,4 +1,4 @@
-import { applyResponseCurve, clampAxis } from './input-math'
+import { applyRadialDeadzone, applyResponseCurve, clampAxis } from './input-math'
 import type { InputAdapter, InputState } from './types'
 
 const DEFAULT_DEADZONE = 0.15
@@ -65,19 +65,7 @@ export function normalizeTouchJoystick(
   const dy = clampFinite(touchY) - clampFinite(centerY)
   const rawX = clampAxis(dx / r)
   const rawY = clampAxis(dy / r)
-  const dz = Number.isFinite(deadzone) ? Math.max(0, Math.min(deadzone, 1)) : DEFAULT_DEADZONE
-  const mag = Math.hypot(rawX, rawY)
-  if (mag <= dz || mag === 0 || dz >= 1) {
-    target.x = 0
-    target.y = 0
-    return target
-  }
-  const clampedMag = Math.min(mag, 1)
-  const scaled = (clampedMag - dz) / (1 - dz)
-  const norm = scaled / mag
-  target.x = rawX * norm
-  target.y = rawY * norm
-  return target
+  return applyRadialDeadzone(rawX, rawY, deadzone, target)
 }
 
 /**
@@ -454,16 +442,19 @@ export class TouchInput implements InputAdapter {
 
   private handleButtonTouchStart(touch: Touch): void {
     if (touch.target === this.fireEl) {
+      if (this.fireActive) return
       this.fireActive = true
       this.fireButton.identifier = touch.identifier
       return
     }
     if (touch.target === this.missileEl) {
+      if (this.missileActive) return
       this.missileActive = true
       this.missileButton.identifier = touch.identifier
       return
     }
     if (touch.target === this.boostEl) {
+      if (this.boostActive) return
       this.boostActive = true
       this.boostButton.identifier = touch.identifier
     }
