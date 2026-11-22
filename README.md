@@ -1,10 +1,13 @@
 # Asteroids 3D
 
 Monorepo do Asteroids 3D. Este repositório entrega a **Fase 1 (M1) — núcleo
-matemático e física determinística** no pacote isomórfico `shared/`, e o **M0 —
+matemático e física determinística** no pacote isomórfico `shared/`, o **M0 —
 cliente Vite/TypeScript com servidor de desenvolvimento HTTPS confiável, status
-WebSocket e proxy `/ws` na mesma origem**, além do stub WS em `server/`. Cliente 3D,
-servidor de jogo real e WebXR (F2+) ainda serão adicionados.
+WebSocket e proxy `/ws` na mesma origem** (além do stub WS em `server/`) e o
+**M2 — cockpit 3D procedural, pipeline de render tri-modal (Flat / VR Box / Quest 3
+WebXR) e HUD diegético com radar e offscreen pips, sem assets externos**. O
+servidor de jogo real, os inputs completos (M3) e o loop/IA (M4) ainda serão
+adicionados.
 
 ## Pré-requisitos
 
@@ -162,6 +165,47 @@ comandos): `docs/superpowers/specs/2026-11-22-fase-0-client-https-ws-design.md`.
 | `pnpm -r test` | PASS — client 2/2, shared 46/46, server 1/1 |
 | `pnpm -C client build` | PASS — `✓ 5 modules transformed`, `✓ built in 97ms` |
 
+## M2 — Render tri-modal, cockpit e HUD diegético (US-05/06/07)
+
+O `client/` agora usa Three.js (`three@^0.187.0`) com cena bootstrap em `GameApp`,
+hierarquia `CockpitRig` conforme spec 4.4, `RenderPipeline` tri-modal e HUD diegético
+(`CanvasTexture` 512×256, dirty-flag 15Hz) com radar e 16 pips radiais. Constantes da
+spec em `client/src/core/render-config.ts`: barrel `k1 = 0.22`, `k2 = 0.24`, IPD
+`56–74 mm` (default `64`), `MAX_DPR = 2`, WebXR `immersive-vr` + `local`.
+
+Selecione o modo por query: `?render=FLAT` (padrão), `?render=VR_BOX` ou
+`?render=QUEST_3`. Hooks de dev apenas: `[`/`]` ajustam o IPD em ±1 mm e `R` faz
+`recenter()`. O mapeamento final (D-Pad no VR Box / botão X no Quest) chega no **M3**.
+
+> **ADR-04:** nenhum asset externo e nenhum pós-processamento pesado — a distorção do
+> VR Box é um shader procedural e o HUD é desenhado em canvas gerado em código.
+
+### Checklist manual M2 (validação em dispositivo)
+
+Preenchido apenas com itens realmente executados; o que não foi executado está
+`PENDENTE`. Meta de performance: **72–90 FPS no Quest 3** e **60 FPS no Android
+(Flat/VR Box)** — sem medição real neste ambiente. Fonte autoritativa e detalhes:
+`docs/superpowers/specs/2026-11-22-m2-render-cockpit-hud-design.md`.
+
+| Modo | URL/dispositivo | FPS observado | HUD atualiza corretamente | Pips/radar corretos | Sem assets externos | Evidência |
+| --- | --- | --- | --- | --- | --- | --- |
+| Flat | `https://localhost:5173?render=FLAT` (PC Chrome/Edge) | `PENDENTE` | `PENDENTE` | `PENDENTE` | `PENDENTE` em dispositivo (código auditado: ✅) | Checks automatizados 2026-11-22 (abaixo); abertura ao vivo não executada — CA do mkcert exige aceite humano. |
+| Flat | `https://<IP-LAN>:5173?render=FLAT` (Android Chrome) | `PENDENTE` | `PENDENTE` | `PENDENTE` | `PENDENTE` em dispositivo (código auditado: ✅) | Não executado; requer CA do mkcert instalada no dispositivo. |
+| VR Box | Visitante óptico + Android Chrome, `https://<IP-LAN>:5173?render=VR_BOX` | `PENDENTE` | `PENDENTE` | `PENDENTE` | `PENDENTE` em dispositivo (código auditado: ✅) | Não executado; estereoscopia/barrel/conforto exigem conferência visual no visor. |
+| Quest 3 | Meta Quest Browser, `https://<IP-LAN>:5173?render=QUEST_3` | `PENDENTE` | `PENDENTE` | `PENDENTE` | `PENDENTE` em dispositivo (código auditado: ✅) | Não executado; botão "Enter VR", sessão `immersive-vr` e recenter não exercitados em hardware. |
+
+> Nenhuma linha foi validada em dispositivo. Código, constantes e hot paths foram
+> verificados por tipagem, testes, build e auditoria de alocações; não reivindicar
+> FPS, conforto ou correção visual "em dispositivo" sem preencher a tabela acima.
+
+### Verificação automatizada M2 (executada em 2026-11-22)
+
+| Comando | Resultado |
+| --- | --- |
+| `pnpm -r typecheck` | PASS — `client`, `server` e `shared` `Done` (sem erros/warnings). |
+| `pnpm -r test` | PASS — `client` 4 arquivos / 15 testes, `shared` 5 arquivos / 46 testes, `server` 1 teste. |
+| `pnpm -C client build` | PASS — `✓ 15 modules transformed`, `✓ built in 1.26s` (aviso pré-existente de chunk >500 kB do Three.js, não bloqueante). |
+
 ## Estrutura atual
 
 ```
@@ -175,13 +219,27 @@ shared/
     index.ts       # exports públicos
   test/            # Vitest: constants, math, physics, collision, smoke
 client/
-  index.html       # página de entrada
+  index.html       # página de entrada (#app)
   vite.config.ts   # HTTPS (mkcert), 0.0.0.0:5173 / preview 4173 + proxy /ws em ambos
   src/
-    main.ts        # scaffold + status WS (connecting, connected, hello, error, closed)
+    main.ts        # bootstrap GameApp + ?render= + hooks dev + status WS do M0
     ws-status.ts   # buildWsUrl() — URL WS na mesma origem (wss para https)
     style.css
-  test/ws-status.test.ts  # Vitest: buildWsUrl (https → wss, http → ws)
+    core/
+      GameApp.ts         # Scene/renderer, setAnimationLoop, estado mock, dispose
+      Starfield.ts       # campo estelar procedural sem assets
+      CockpitRig.ts      # hierarquia ShipRoot/CockpitFrame/PilotHeadRig (spec 4.4)
+      render-config.ts   # constantes barrel/IPD/DPR/XR
+      RenderPipeline.ts  # FLAT / VR_BOX (estéreo + barrel) / QUEST_3 (WebXR)
+    ui/
+      hud-math.ts        # helpers puros: radar/pip/throttle
+      DiegeticHUD.ts     # CanvasTexture 512x256, dirty-flag 15Hz, radar
+      OffscreenPips.ts   # pool de 16 setas radiais (sem alocação por frame)
+  test/
+    ws-status.test.ts       # buildWsUrl (https → wss, http → ws)
+    render-config.test.ts   # constantes da spec + limites de IPD
+    hud-math.test.ts        # projeção radar/pip + throttle 15Hz
+    offscreen-pips.test.ts  # pips dentro/fora do FOV
   vitest.config.ts
 server/
   package.json     # ws + tsx (scripts dev/test)
@@ -204,9 +262,15 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
 - Plano M0 (cliente HTTPS/WS): `docs/superpowers/plans/2026-11-22-fase-0-client-https-ws.md`
 - Design e verificação M0 (HTTPS/WS + checklist US-02): `docs/superpowers/specs/2026-11-22-fase-0-client-https-ws-design.md`
 - SDD/ledger M0: `.superpowers/sdd/2026-11-22-fase-0-client-https-ws/`
+- Plano M2 (render/cockpit/HUD): `docs/superpowers/plans/2026-11-22-m2-render-cockpit-hud.md`
+- Design e verificação M2 (checklist Flat/VR Box/Quest 3): `docs/superpowers/specs/2026-11-22-m2-render-cockpit-hud-design.md`
+- SDD/ledger M2: `.superpowers/sdd/2026-11-22-m2-render-cockpit-hud/`
 
 ## Próximos passos
 
 - M0 / US-02: validar a abertura em Android Chrome e Meta Quest Browser sem alertas
   de certificado (requer desktop com diálogo de confiança da CA disponível).
-- M2 / US-05..07: pipeline 3D tri-modal (plano, VR Box, WebXR), cockpit e HUD diegético.
+- M2 / US-05..07: validação em dispositivo do checklist acima (FPS, estereoscopia/barrel,
+  HUD/pips, ausência de assets) — tudo `PENDENTE` neste ambiente.
+- M3: inputs Desktop/Touch/VR Box/Quest XR (D-Pad de IPD e botão X de recenter).
+- M4: loop solo em Worker + IA/ondas.
