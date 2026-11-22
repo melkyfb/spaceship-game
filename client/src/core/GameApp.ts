@@ -4,6 +4,7 @@ import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield } from './Starfield'
 import { DesktopInput } from '../input/DesktopInput'
 import { InputManager } from '../input/InputManager'
+import { TouchInput } from '../input/TouchInput'
 import { DiegeticHUD } from '../ui/DiegeticHUD'
 import { OffscreenPips } from '../ui/OffscreenPips'
 import type { Contact, HudState } from '../ui/hud-math'
@@ -15,6 +16,16 @@ const MOCK_CONTACT_COUNT = 8
 const MOCK_WAVE_SECONDS = 12
 const FREE_LOOK_MAX_YAW = 1.2
 const FREE_LOOK_MAX_PITCH = 0.8
+
+function isMobileTouchDevice(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const touchPoints = navigator.maxTouchPoints ?? 0
+  if (touchPoints <= 0) return false
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia('(pointer: coarse)').matches
+  }
+  return true
+}
 
 /** Bootstrap da cena Three.js: cena, câmera, renderer, loop e ciclo de vida. */
 export class GameApp {
@@ -34,7 +45,10 @@ export class GameApp {
   private readonly clock = new THREE.Clock()
   private readonly inputManager = new InputManager()
   private readonly desktopInput = new DesktopInput()
+  private readonly touchInput = new TouchInput()
+  private readonly useTouchInput = isMobileTouchDevice()
   private desktopInputAttached = false
+  private touchInputAttached = false
   private running = false
   private disposed = false
 
@@ -64,8 +78,12 @@ export class GameApp {
     canvas.style.height = '100%'
     this.container.append(canvas)
 
-    this.inputManager.setAdapter(this.desktopInput)
-    this.syncDesktopInput(this.pipeline.getMode())
+    if (this.useTouchInput) {
+      this.inputManager.setAdapter(this.touchInput)
+    } else {
+      this.inputManager.setAdapter(this.desktopInput)
+    }
+    this.syncInputForMode(this.pipeline.getMode())
 
     // Iluminação mínima; brilho neste projeto vem de emissivos/Fresnel, não de bloom (ADR-04).
     this.scene.add(new THREE.AmbientLight(0x334466, 1))
@@ -103,7 +121,7 @@ export class GameApp {
   /** Seleção de modo (FLAT / VR_BOX / QUEST_3) — ver main.ts para a fonte da config. */
   async setRenderMode(mode: RenderMode): Promise<void> {
     await this.pipeline.setMode(mode)
-    this.syncDesktopInput(this.pipeline.getMode())
+    this.syncInputForMode(this.pipeline.getMode())
   }
 
   getRenderMode(): RenderMode {
@@ -126,7 +144,15 @@ export class GameApp {
     this.renderer.setAnimationLoop(null)
     window.removeEventListener('resize', this.handleResize)
     this.inputManager.dispose()
-    this.desktopInputAttached = false
+    if (this.desktopInputAttached) {
+      this.desktopInput.detach()
+      this.desktopInputAttached = false
+    }
+    if (this.touchInputAttached) {
+      this.touchInput.detach()
+      this.touchInputAttached = false
+    }
+    this.touchInput.dispose()
     this.pipeline.dispose()
     this.hud.dispose()
     this.pips.dispose()
@@ -161,14 +187,30 @@ export class GameApp {
     return this.inputManager
   }
 
-  private syncDesktopInput(mode: RenderMode): void {
-    const shouldAttach = mode === 'FLAT' && !this.disposed
-    if (shouldAttach && !this.desktopInputAttached) {
+  private syncInputForMode(mode: RenderMode): void {
+    const shouldAttachFlat = mode === 'FLAT' && !this.disposed
+    if (this.useTouchInput) {
+      if (shouldAttachFlat && !this.touchInputAttached) {
+        this.touchInput.attach(this.renderer.domElement)
+        this.touchInputAttached = true
+      } else if (!shouldAttachFlat && this.touchInputAttached) {
+        this.touchInput.detach()
+        this.touchInputAttached = false
+      }
+      if (this.desktopInputAttached) {
+        this.desktopInput.detach()
+        this.desktopInputAttached = false
+      }
+      if (!shouldAttachFlat) this.resetHeadLook()
+      return
+    }
+
+    if (shouldAttachFlat && !this.desktopInputAttached) {
       this.desktopInput.attach(this.renderer.domElement)
       this.desktopInputAttached = true
       return
     }
-    if (!shouldAttach && this.desktopInputAttached) {
+    if (!shouldAttachFlat && this.desktopInputAttached) {
       this.desktopInput.detach()
       this.desktopInputAttached = false
       this.resetHeadLook()
