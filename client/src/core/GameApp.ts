@@ -4,6 +4,7 @@ import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield } from './Starfield'
 import { DesktopInput } from '../input/DesktopInput'
 import { InputManager } from '../input/InputManager'
+import { QuestXRInput } from '../input/QuestXRInput'
 import { TouchInput } from '../input/TouchInput'
 import { VRBoxInput } from '../input/VRBoxInput'
 import { DiegeticHUD } from '../ui/DiegeticHUD'
@@ -48,10 +49,12 @@ export class GameApp {
   private readonly desktopInput = new DesktopInput()
   private readonly touchInput = new TouchInput()
   private readonly vrBoxInput = new VRBoxInput()
+  private readonly questXrInput = new QuestXRInput({ onRecenter: () => this.recenter() })
   private readonly useTouchInput = isMobileTouchDevice()
   private desktopInputAttached = false
   private touchInputAttached = false
   private vrBoxInputAttached = false
+  private questXrSessionAttached = false
   private readonly vrBoxHeadQuat = { x: 0, y: 0, z: 0, w: 1 }
   private inputSyncToken = 0
   private running = false
@@ -74,6 +77,8 @@ export class GameApp {
       camera: this.camera,
       cockpitRoot: this.cockpit.root,
       container: this.container,
+      onXrSessionStart: (session) => this.handleXrSessionStart(session as unknown as XRSession),
+      onXrSessionEnd: () => this.handleXrSessionEnd(),
     })
     const canvas = this.renderer.domElement
     canvas.style.position = 'fixed'
@@ -161,6 +166,11 @@ export class GameApp {
       void this.vrBoxInput.detach()
       this.vrBoxInputAttached = false
     }
+    if (this.questXrSessionAttached) {
+      this.questXrInput.detach()
+      this.questXrSessionAttached = false
+    }
+    this.questXrInput.dispose()
     this.touchInput.dispose()
     this.pipeline.dispose()
     this.hud.dispose()
@@ -207,6 +217,7 @@ export class GameApp {
 
     const shouldAttachFlat = mode === 'FLAT' && !this.disposed
     const shouldAttachVRBox = mode === 'VR_BOX' && !this.disposed
+    const shouldAttachQuestXr = mode === 'QUEST_3' && !this.disposed
 
     // Sync flat inputs (synchronous attach/detach).
     if (this.useTouchInput) {
@@ -269,6 +280,25 @@ export class GameApp {
 
     if (!isCurrent()) return
 
+    if (shouldAttachQuestXr) {
+      this.inputManager.setAdapter(this.questXrInput)
+      const session = this.pipeline.getActiveXrSession()
+      if (session && !this.questXrSessionAttached) {
+        this.questXrInput.attach(session as unknown as XRSession)
+        this.questXrSessionAttached = true
+      } else if (!session && this.questXrSessionAttached) {
+        this.questXrInput.detach()
+        this.questXrSessionAttached = false
+      }
+      this.resetHeadLook()
+      return
+    }
+
+    if (this.questXrSessionAttached) {
+      this.questXrInput.detach()
+      this.questXrSessionAttached = false
+    }
+
     if (!shouldAttachFlat && !shouldAttachVRBox) {
       this.resetHeadLook()
     }
@@ -276,6 +306,27 @@ export class GameApp {
     if (shouldAttachFlat) {
       if (this.useTouchInput) this.inputManager.setAdapter(this.touchInput)
       else this.inputManager.setAdapter(this.desktopInput)
+    }
+  }
+
+  private handleXrSessionStart(session: XRSession): void {
+    if (this.disposed) return
+    if (this.pipeline.getMode() !== 'QUEST_3') return
+    this.inputManager.setAdapter(this.questXrInput)
+    this.questXrInput.attach(session)
+    this.questXrSessionAttached = true
+    this.resetHeadLook()
+  }
+
+  private handleXrSessionEnd(): void {
+    if (this.questXrSessionAttached) {
+      this.questXrInput.detach()
+      this.questXrSessionAttached = false
+    }
+    if (this.disposed) return
+    if (this.pipeline.getMode() === 'QUEST_3') {
+      this.inputManager.setAdapter(this.questXrInput)
+      this.resetHeadLook()
     }
   }
 

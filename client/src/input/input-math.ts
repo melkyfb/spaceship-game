@@ -2,7 +2,7 @@ export function clampAxis(value: number): number {
   if (!Number.isFinite(value)) return 0
   if (value <= -1) return -1
   if (value >= 1) return 1
-  return value
+  return value === 0 ? 0 : value
 }
 
 export function applyRadialDeadzone(

@@ -22,6 +22,9 @@ export interface RenderPipelineOptions {
   container?: HTMLElement
   /** Injeta a superfície WebXR (testes); por padrão usa `navigator.xr`. */
   xr?: XrSystemLike | null
+  /** Hooks opcionais para integrar input XR (Quest) ao ciclo de vida da sessão. */
+  onXrSessionStart?: (session: XrSessionLike) => void
+  onXrSessionEnd?: () => void
 }
 
 /** Superfície WebXR mínima consumida aqui; o input Quest completo chega em M3. */
@@ -120,6 +123,8 @@ export class RenderPipeline {
   private readonly uniforms: BarrelUniforms
 
   private readonly xr: XrSystemLike | null
+  private readonly onXrSessionStart: ((session: XrSessionLike) => void) | null
+  private readonly onXrSessionEnd: (() => void) | null
 
   private mode: RenderMode = 'FLAT'
   private ipdMm: number
@@ -136,6 +141,8 @@ export class RenderPipeline {
     this.headCamera = options.camera
     this.container = options.container
     this.xr = options.xr !== undefined ? options.xr : this.readNavigatorXr()
+    this.onXrSessionStart = options.onXrSessionStart ?? null
+    this.onXrSessionEnd = options.onXrSessionEnd ?? null
 
     const head = this.headCamera
     this.pilotHeadRig = options.cockpitRoot.getObjectByName('PilotHeadRig') ?? null
@@ -198,6 +205,11 @@ export class RenderPipeline {
   /** Estado do botão VR — permite à UI/testes detectar falhas sem ler o console. */
   getXrStatus(): XrStatus {
     return this.xrStatus
+  }
+
+  /** Sessão WebXR ativa (Quest), se houver. */
+  getActiveXrSession(): XrSessionLike | null {
+    return this.activeSession
   }
 
   /** Troca de modo; XR nunca é solicitado aqui (requestSession exige gesto do usuário). */
@@ -434,6 +446,7 @@ export class RenderPipeline {
       session.addEventListener('end', this.handleXrSessionEnd)
       this.xrStatus = 'in-session'
       if (this.vrButton !== null) this.vrButton.disabled = true
+      this.onXrSessionStart?.(session)
     } catch (error) {
       console.warn('[render] unable to start immersive-vr session', error)
       this.xrStatus = 'error'
@@ -450,10 +463,16 @@ export class RenderPipeline {
       this.activeSession.removeEventListener('end', this.handleXrSessionEnd)
       this.activeSession = null
     }
+    if (this.disposed || this.mode !== 'QUEST_3') {
+      this.xrStatus = 'idle'
+      this.onXrSessionEnd?.()
+      return
+    }
     this.xrStatus = 'ready'
     if (this.vrButton !== null) {
       this.vrButton.disabled = false
       this.vrButton.textContent = 'Enter VR'
     }
+    this.onXrSessionEnd?.()
   }
 }
