@@ -53,6 +53,7 @@ export class GameApp {
   private touchInputAttached = false
   private vrBoxInputAttached = false
   private readonly vrBoxHeadQuat = { x: 0, y: 0, z: 0, w: 1 }
+  private inputSyncToken = 0
   private running = false
   private disposed = false
 
@@ -200,9 +201,14 @@ export class GameApp {
   }
 
   private async syncInputForMode(mode: RenderMode): Promise<void> {
+    const token = ++this.inputSyncToken
+    const isCurrent = (): boolean =>
+      token === this.inputSyncToken && !this.disposed && this.pipeline.getMode() === mode
+
     const shouldAttachFlat = mode === 'FLAT' && !this.disposed
     const shouldAttachVRBox = mode === 'VR_BOX' && !this.disposed
 
+    // Sync flat inputs (synchronous attach/detach).
     if (this.useTouchInput) {
       if (shouldAttachFlat && !this.touchInputAttached) {
         this.touchInput.attach(this.renderer.domElement)
@@ -225,24 +231,43 @@ export class GameApp {
       }
     }
 
+    if (!isCurrent()) return
+
+    // Attach VR Box input when entering VR_BOX.
     if (shouldAttachVRBox && !this.vrBoxInputAttached) {
       this.inputManager.setAdapter(this.vrBoxInput)
       try {
         await this.vrBoxInput.attach()
-        this.vrBoxInputAttached = true
       } catch {
-        // Degraded mode: status exposed by VRBoxInput; keep running.
-        this.vrBoxInputAttached = true
+        // Degraded mode: status exposed by VRBoxInput; continue.
       }
+      if (!isCurrent()) {
+        // A newer sync won; ensure we don't leave VRBox attached behind.
+        try {
+          await this.vrBoxInput.detach()
+        } catch {
+          // ignore
+        }
+        return
+      }
+      this.vrBoxInputAttached = true
       this.resetHeadLook()
       return
     }
 
+    // Detach VR Box input when leaving VR_BOX.
     if (!shouldAttachVRBox && this.vrBoxInputAttached) {
-      await this.vrBoxInput.detach()
+      try {
+        await this.vrBoxInput.detach()
+      } catch {
+        // ignore
+      }
+      if (!isCurrent()) return
       this.vrBoxInputAttached = false
       this.resetHeadLook()
     }
+
+    if (!isCurrent()) return
 
     if (!shouldAttachFlat && !shouldAttachVRBox) {
       this.resetHeadLook()

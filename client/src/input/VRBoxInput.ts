@@ -1,17 +1,20 @@
 import { deviceOrientationToQuaternionYXZ, type QuatLike } from './vrbox-math'
 import {
-  createEmptyGamepadMapping,
   isMappingComplete,
   loadGamepadMapping,
   saveGamepadMapping,
   type GamepadMapping,
 } from './gamepad-mapping'
 import { applyRadialDeadzone, applyResponseCurve, clampAxis } from './input-math'
+import {
+  advanceVRBoxWizard,
+  createVRBoxWizardState,
+  type VRBoxWizardState,
+} from './vrbox-wizard'
 import type { InputAdapter, InputState } from './types'
 
 const RESPONSE_EXPONENT = 1.6
 const DEFAULT_DEADZONE = 0.15
-const AXIS_CAPTURE_THRESHOLD = 0.6
 const BUTTON_CAPTURE_THRESHOLD = 0.5
 
 export interface VRBoxStatus {
@@ -53,8 +56,6 @@ function readButtonValue(button: GamepadButton | undefined): number {
   return v
 }
 
-type WizardStage = 0 | 1 | 2 | 3
-
 export class VRBoxInput implements InputAdapter {
   private readonly state: InputState = createNeutralState()
   private readonly headQuat: QuatLike = { x: 0, y: 0, z: 0, w: 1 }
@@ -72,12 +73,9 @@ export class VRBoxInput implements InputAdapter {
   private wakeLockSentinel: { release?: () => Promise<void>; addEventListener?: (t: string, l: () => void) => void } | null =
     null
   private mapping: GamepadMapping = loadGamepadMapping()
-  private wizardStage: WizardStage = 0
+  private wizard: VRBoxWizardState | null = null
   private wizardOverlay: HTMLDivElement | null = null
   private wizardText: HTMLDivElement | null = null
-  private wizardMapping: GamepadMapping = createEmptyGamepadMapping()
-  private wizardAxisBaseline: number[] | null = null
-  private wizardButtonBaseline: boolean[] | null = null
 
   private readonly onDeviceOrientation = (event: DeviceOrientationEvent): void => {
     // Use relative deviceorientation only (no absolute/compass). ADR-01: head only.
@@ -140,7 +138,7 @@ export class VRBoxInput implements InputAdapter {
       return
     }
 
-    if (this.wizardStage !== 0) this.hideWizard()
+    if (this.wizard) this.hideWizard()
     this.status.gamepad = isStandard ? 'standard' : 'mapped'
     if (isStandard) this.applyStandardGamepad(gp)
     else this.applyMappedGamepad(gp)
@@ -332,92 +330,32 @@ export class VRBoxInput implements InputAdapter {
     return readButtonPressed(gp.buttons[index])
   }
 
-  private ensureWizard(gp: Gamepad): void {
-    if (this.wizardStage !== 0) return
-    this.wizardStage = 1
-    this.status.wizardStep = 1
-    this.wizardMapping = createEmptyGamepadMapping()
-    this.captureBaselines(gp)
+  private ensureWizard(_gp: Gamepad): void {
+    if (this.wizard) return
+    this.wizard = createVRBoxWizardState()
+    this.status.wizardStep = this.wizard.stage
     this.showWizard()
     this.renderWizard()
   }
 
-  private captureBaselines(gp: Gamepad): void {
-    this.wizardAxisBaseline = Array.from(gp.axes, (v) => (Number.isFinite(v) ? v : 0))
-    this.wizardButtonBaseline = Array.from(gp.buttons, (b) => readButtonPressed(b))
-  }
-
   private captureWizard(gp: Gamepad): void {
-    if (this.wizardStage === 0) return
-    if (!this.wizardAxisBaseline) this.captureBaselines(gp)
-    const axisBaseline = this.wizardAxisBaseline
-    const buttonBaseline = this.wizardButtonBaseline
-    if (!axisBaseline || !buttonBaseline) return
+    if (!this.wizard) return
+    const snapshot = {
+      axes: Array.from(gp.axes, (v) => (Number.isFinite(v) ? v : 0)),
+      buttons: Array.from(gp.buttons, (b) => readButtonPressed(b)),
+    }
+    const next = advanceVRBoxWizard(this.wizard, snapshot)
+    this.wizard = next
 
-    if (this.wizardStage === 1) {
-      // Step 1: capture 2 axes for thrust/strafeX
-      const a0 = this.findMovedAxis(gp, axisBaseline, -1)
-      const a1 = this.findMovedAxis(gp, axisBaseline, a0)
-      if (a0 >= 0 && a1 >= 0) {
-        this.wizardMapping.axes.strafeX = a0
-        this.wizardMapping.axes.thrust = a1
-        this.wizardStage = 2
-        this.status.wizardStep = 2
-        this.captureBaselines(gp)
-        this.renderWizard()
-      }
+    if (next.stage === 0) {
+      this.mapping = next.mapping
+      saveGamepadMapping(this.mapping)
+      this.hideWizard()
       return
     }
 
-    if (this.wizardStage === 2) {
-      // Step 2: capture 2 axes for yaw/pitch
-      const a0 = this.findMovedAxis(gp, axisBaseline, -1)
-      const a1 = this.findMovedAxis(gp, axisBaseline, a0)
-      if (a0 >= 0 && a1 >= 0) {
-        this.wizardMapping.axes.yaw = a0
-        this.wizardMapping.axes.pitch = a1
-        this.wizardStage = 3
-        this.status.wizardStep = 3
-        this.captureBaselines(gp)
-        this.renderWizard()
-      }
-      return
-    }
-
-    if (this.wizardStage === 3) {
-      // Step 3: capture 3 buttons for firePrimary/fireSecondary/boost
-      const b0 = this.findPressedButton(gp, buttonBaseline, -1)
-      const b1 = this.findPressedButton(gp, buttonBaseline, b0)
-      const b2 = this.findPressedButton(gp, buttonBaseline, b0, b1)
-      if (b0 >= 0 && b1 >= 0 && b2 >= 0) {
-        this.wizardMapping.buttons.firePrimary = b0
-        this.wizardMapping.buttons.fireSecondary = b1
-        this.wizardMapping.buttons.boost = b2
-        this.mapping = this.wizardMapping
-        saveGamepadMapping(this.mapping)
-        this.hideWizard()
-      }
-    }
-  }
-
-  private findMovedAxis(gp: Gamepad, baseline: number[], excludeA: number, excludeB = -1): number {
-    for (let i = 0; i < gp.axes.length; i++) {
-      if (i === excludeA || i === excludeB) continue
-      const base = baseline[i] ?? 0
-      const val = gp.axes[i] ?? 0
-      if (Math.abs(val - base) >= AXIS_CAPTURE_THRESHOLD) return i
-    }
-    return -1
-  }
-
-  private findPressedButton(gp: Gamepad, baseline: boolean[], excludeA: number, excludeB = -1): number {
-    for (let i = 0; i < gp.buttons.length; i++) {
-      if (i === excludeA || i === excludeB) continue
-      const base = baseline[i] ?? false
-      const pressed = readButtonPressed(gp.buttons[i])
-      if (pressed && !base) return i
-    }
-    return -1
+    this.status.wizardStep = next.stage
+    this.renderWizard()
   }
 
   private showWizard(): void {
@@ -444,27 +382,29 @@ export class VRBoxInput implements InputAdapter {
   }
 
   private renderWizard(): void {
-    if (!this.wizardText) return
-    if (this.wizardStage === 1) {
-      this.wizardText.textContent =
-        'Gamepad BT: Passo 1/3 — Mova o stick de STRAFE e depois o eixo de THRUST.'
+    if (!this.wizardText || !this.wizard) return
+    const w = this.wizard
+    const releaseHint = w.waitingRelease ? ' Solte o controle.' : ''
+    if (w.stage === 1) {
+      const label = w.subStep === 0 ? 'Mova o eixo de STRAFE' : 'Mova o eixo de THRUST'
+      this.wizardText.textContent = `Gamepad BT: Passo 1/3 — ${label}.${releaseHint}`
       return
     }
-    if (this.wizardStage === 2) {
-      this.wizardText.textContent = 'Gamepad BT: Passo 2/3 — Mova o eixo de YAW e depois o de PITCH.'
+    if (w.stage === 2) {
+      const label = w.subStep === 0 ? 'Mova o eixo de YAW' : 'Mova o eixo de PITCH'
+      this.wizardText.textContent = `Gamepad BT: Passo 2/3 — ${label}.${releaseHint}`
       return
     }
-    if (this.wizardStage === 3) {
-      this.wizardText.textContent =
-        'Gamepad BT: Passo 3/3 — Pressione FIRE, MISSILE/SECUNDÁRIO e BOOST.'
+    if (w.stage === 3) {
+      const labels = ['Pressione FIRE', 'Pressione MISSILE/SECUNDÁRIO', 'Pressione BOOST']
+      const label = labels[w.subStep] ?? 'Pressione botão'
+      this.wizardText.textContent = `Gamepad BT: Passo 3/3 — ${label}.${releaseHint}`
     }
   }
 
   private hideWizard(): void {
-    this.wizardStage = 0
+    this.wizard = null
     this.status.wizardStep = 0
-    this.wizardAxisBaseline = null
-    this.wizardButtonBaseline = null
     if (this.wizardOverlay) {
       this.wizardOverlay.remove()
       this.wizardOverlay = null
