@@ -5,6 +5,7 @@ import { createStarfield } from './Starfield'
 import { DesktopInput } from '../input/DesktopInput'
 import { InputManager } from '../input/InputManager'
 import { TouchInput } from '../input/TouchInput'
+import { VRBoxInput } from '../input/VRBoxInput'
 import { DiegeticHUD } from '../ui/DiegeticHUD'
 import { OffscreenPips } from '../ui/OffscreenPips'
 import type { Contact, HudState } from '../ui/hud-math'
@@ -46,9 +47,12 @@ export class GameApp {
   private readonly inputManager = new InputManager()
   private readonly desktopInput = new DesktopInput()
   private readonly touchInput = new TouchInput()
+  private readonly vrBoxInput = new VRBoxInput()
   private readonly useTouchInput = isMobileTouchDevice()
   private desktopInputAttached = false
   private touchInputAttached = false
+  private vrBoxInputAttached = false
+  private readonly vrBoxHeadQuat = { x: 0, y: 0, z: 0, w: 1 }
   private running = false
   private disposed = false
 
@@ -83,7 +87,7 @@ export class GameApp {
     } else {
       this.inputManager.setAdapter(this.desktopInput)
     }
-    this.syncInputForMode(this.pipeline.getMode())
+    void this.syncInputForMode(this.pipeline.getMode())
 
     // Iluminação mínima; brilho neste projeto vem de emissivos/Fresnel, não de bloom (ADR-04).
     this.scene.add(new THREE.AmbientLight(0x334466, 1))
@@ -121,7 +125,7 @@ export class GameApp {
   /** Seleção de modo (FLAT / VR_BOX / QUEST_3) — ver main.ts para a fonte da config. */
   async setRenderMode(mode: RenderMode): Promise<void> {
     await this.pipeline.setMode(mode)
-    this.syncInputForMode(this.pipeline.getMode())
+    await this.syncInputForMode(this.pipeline.getMode())
   }
 
   getRenderMode(): RenderMode {
@@ -151,6 +155,10 @@ export class GameApp {
     if (this.touchInputAttached) {
       this.touchInput.detach()
       this.touchInputAttached = false
+    }
+    if (this.vrBoxInputAttached) {
+      void this.vrBoxInput.detach()
+      this.vrBoxInputAttached = false
     }
     this.touchInput.dispose()
     this.pipeline.dispose()
@@ -187,8 +195,14 @@ export class GameApp {
     return this.inputManager
   }
 
-  private syncInputForMode(mode: RenderMode): void {
+  getVRBoxInput(): VRBoxInput {
+    return this.vrBoxInput
+  }
+
+  private async syncInputForMode(mode: RenderMode): Promise<void> {
     const shouldAttachFlat = mode === 'FLAT' && !this.disposed
+    const shouldAttachVRBox = mode === 'VR_BOX' && !this.disposed
+
     if (this.useTouchInput) {
       if (shouldAttachFlat && !this.touchInputAttached) {
         this.touchInput.attach(this.renderer.domElement)
@@ -201,24 +215,53 @@ export class GameApp {
         this.desktopInput.detach()
         this.desktopInputAttached = false
       }
-      if (!shouldAttachFlat) this.resetHeadLook()
+    } else {
+      if (shouldAttachFlat && !this.desktopInputAttached) {
+        this.desktopInput.attach(this.renderer.domElement)
+        this.desktopInputAttached = true
+      } else if (!shouldAttachFlat && this.desktopInputAttached) {
+        this.desktopInput.detach()
+        this.desktopInputAttached = false
+      }
+    }
+
+    if (shouldAttachVRBox && !this.vrBoxInputAttached) {
+      this.inputManager.setAdapter(this.vrBoxInput)
+      try {
+        await this.vrBoxInput.attach()
+        this.vrBoxInputAttached = true
+      } catch {
+        // Degraded mode: status exposed by VRBoxInput; keep running.
+        this.vrBoxInputAttached = true
+      }
+      this.resetHeadLook()
       return
     }
 
-    if (shouldAttachFlat && !this.desktopInputAttached) {
-      this.desktopInput.attach(this.renderer.domElement)
-      this.desktopInputAttached = true
-      return
-    }
-    if (!shouldAttachFlat && this.desktopInputAttached) {
-      this.desktopInput.detach()
-      this.desktopInputAttached = false
+    if (!shouldAttachVRBox && this.vrBoxInputAttached) {
+      await this.vrBoxInput.detach()
+      this.vrBoxInputAttached = false
       this.resetHeadLook()
+    }
+
+    if (!shouldAttachFlat && !shouldAttachVRBox) {
+      this.resetHeadLook()
+    }
+
+    if (shouldAttachFlat) {
+      if (this.useTouchInput) this.inputManager.setAdapter(this.touchInput)
+      else this.inputManager.setAdapter(this.desktopInput)
     }
   }
 
   private applyFreeLook(): void {
-    if (this.pipeline.getMode() !== 'FLAT') {
+    const mode = this.pipeline.getMode()
+    if (mode === 'VR_BOX') {
+      const q = this.vrBoxInput.getHeadQuat(this.vrBoxHeadQuat)
+      this.cockpit.pilotHeadRig.quaternion.set(q.x, q.y, q.z, q.w)
+      return
+    }
+    if (mode !== 'FLAT') {
       this.resetHeadLook()
       return
     }
