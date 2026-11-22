@@ -22,7 +22,8 @@ export class OffscreenPips {
   private readonly pips: THREE.Mesh[] = []
 
   private readonly viewScratch = new THREE.Vector3()
-  private readonly ndcScratch = new THREE.Vector3()
+  /** Vector4 preserva as coordenadas de clip (applyMatrix4 não divide por w). */
+  private readonly clipScratch = new THREE.Vector4()
   private readonly pipScratch: PipResult = { show: false, x: 0, y: 0, rot: 0 }
 
   private elapsed = 0
@@ -84,10 +85,15 @@ export class OffscreenPips {
       this.viewScratch.set(contact.position.x, contact.position.y, contact.position.z)
       camera.worldToLocal(this.viewScratch)
       const behind = this.viewScratch.z > 0
-      this.ndcScratch.copy(this.viewScratch).applyMatrix4(camera.projectionMatrix)
+      this.clipScratch
+        .set(this.viewScratch.x, this.viewScratch.y, this.viewScratch.z, 1)
+        .applyMatrix4(camera.projectionMatrix)
 
+      // Em projeção perspectiva clip.w = -z_view, então |clip.x| > profundidade
+      // equivale a |ndc.x| > 1 — sem depender da divisão implícita do Vector3.
+      const depth = Math.abs(this.viewScratch.z)
       const offscreen =
-        behind || Math.abs(this.ndcScratch.x) > 1 || Math.abs(this.ndcScratch.y) > 1
+        behind || Math.abs(this.clipScratch.x) > depth || Math.abs(this.clipScratch.y) > depth
       let angle = Math.atan2(this.viewScratch.y, this.viewScratch.x)
       if (behind) angle += Math.PI
 

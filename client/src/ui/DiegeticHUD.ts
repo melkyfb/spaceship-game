@@ -37,7 +37,8 @@ export class DiegeticHUD {
   private readonly originalMap: THREE.Texture | null
 
   private readonly radarScratch: RadarPoint = { x: 0, y: 0, depth: 0 }
-  private readonly lastContactPositions = new Float32Array(MAX_RADAR_CONTACTS * 3)
+  /** f64 para preservar exatamente as posições (f32 arredonda e marca dirty sempre). */
+  private readonly lastContactPositions = new Float64Array(MAX_RADAR_CONTACTS * 3)
 
   private accumulator = 0
   private sweepAngle = 0
