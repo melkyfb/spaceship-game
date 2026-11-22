@@ -20,7 +20,10 @@ function axis(negative: boolean, positive: boolean): number {
   return positive ? 1 : -1
 }
 
-export function mapDesktopButtons(input: DesktopButtonInput): DesktopButtonState {
+export function mapDesktopButtons(
+  input: DesktopButtonInput,
+  out?: DesktopButtonState,
+): DesktopButtonState {
   const keys = input.keys
   const forward = keys.has('KeyW')
   const backward = keys.has('KeyS')
@@ -33,14 +36,23 @@ export function mapDesktopButtons(input: DesktopButtonInput): DesktopButtonState
   const boost = keys.has('ShiftLeft') || keys.has('ShiftRight')
   const freeLook = keys.has('AltLeft') || keys.has('AltRight')
 
-  return {
-    thrust: axis(backward, forward),
-    strafeX: axis(left, right),
-    strafeY: axis(down, up),
-    roll: axis(rollLeft, rollRight),
-    firePrimary: input.primaryMouse,
-    fireSecondary: input.secondaryMouse,
-    boost,
-    freeLook,
+  const target = out ?? {
+    thrust: 0,
+    strafeX: 0,
+    strafeY: 0,
+    roll: 0,
+    firePrimary: false,
+    fireSecondary: false,
+    boost: false,
+    freeLook: false,
   }
+  target.thrust = axis(backward, forward)
+  target.strafeX = axis(left, right)
+  target.strafeY = axis(down, up)
+  target.roll = axis(rollLeft, rollRight)
+  target.firePrimary = input.primaryMouse
+  target.fireSecondary = input.secondaryMouse
+  target.boost = boost
+  target.freeLook = freeLook
+  return target
 }

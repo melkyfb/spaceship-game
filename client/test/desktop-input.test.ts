@@ -189,4 +189,31 @@ describe('DesktopInput', () => {
     expect(state.pitch).toBeCloseTo(expectedPitch)
     input.dispose()
   })
+
+  it('merges keyboard and gamepad input in the same poll', () => {
+    const { window, target } = setupDom()
+    const input = new DesktopInput()
+    input.attach(target as any)
+
+    window.emit('keydown', { code: 'KeyW', preventDefault: vi.fn() })
+    window.emit('keydown', { code: 'KeyD', preventDefault: vi.fn() })
+
+    const buttons = Array.from({ length: 16 }, () => ({ pressed: false, value: 0 }))
+    buttons[0] = { pressed: true, value: 1 } // firePrimary
+    const gamepad = {
+      connected: true,
+      axes: [0, 0, 0.5, -0.5], // RS yaw/pitch
+      buttons,
+    } as unknown as Gamepad
+
+    input.poll(gamepad)
+    const state = input.getState()
+    expect(state.thrust).toBe(1) // keyboard
+    expect(state.strafeX).toBe(1) // keyboard
+    expect(state.firePrimary).toBe(true) // gamepad
+    const rightStick = applyRadialDeadzone(0.5, -0.5, 0.15)
+    expect(state.yaw).toBeCloseTo(applyResponseCurve(rightStick.x, 1.6))
+    expect(state.pitch).toBeCloseTo(applyResponseCurve(-rightStick.y, 1.6))
+    input.dispose()
+  })
 })

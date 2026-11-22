@@ -1,3 +1,4 @@
+import { mapDesktopButtons, type DesktopButtonInput, type DesktopButtonState } from './desktop-input-math'
 import { applyRadialDeadzone, applyResponseCurve, clampAxis } from './input-math'
 import type { InputAdapter, InputState } from './types'
 
@@ -141,6 +142,21 @@ export class DesktopInput implements InputAdapter {
     this.resetAxes()
   }
 
+  private readonly buttonInput: DesktopButtonInput = {
+    keys: this.keys,
+    primaryMouse: false,
+    secondaryMouse: false,
+  }
+  private readonly buttonState: DesktopButtonState = {
+    thrust: 0,
+    strafeX: 0,
+    strafeY: 0,
+    roll: 0,
+    firePrimary: false,
+    fireSecondary: false,
+    boost: false,
+    freeLook: false,
+  }
   private readonly gpScratch = {
     thrust: 0,
     strafeX: 0,
@@ -158,17 +174,10 @@ export class DesktopInput implements InputAdapter {
   }
 
   poll(gamepad?: Gamepad | null): void {
-    const keys = this.keys
-    const forward = keys.has('KeyW')
-    const backward = keys.has('KeyS')
-    const left = keys.has('KeyA')
-    const right = keys.has('KeyD')
-    const up = keys.has('Space')
-    const down = keys.has('ControlLeft') || keys.has('ControlRight')
-    const rollLeft = keys.has('KeyQ')
-    const rollRight = keys.has('KeyE')
-    const boostKey = keys.has('ShiftLeft') || keys.has('ShiftRight')
-    const freeLook = keys.has('AltLeft') || keys.has('AltRight')
+    this.buttonInput.primaryMouse = this.primaryMouse
+    this.buttonInput.secondaryMouse = this.secondaryMouse
+    const buttons = mapDesktopButtons(this.buttonInput, this.buttonState)
+    const freeLook = buttons.freeLook
 
     // Consume accumulated mouse delta once per poll.
     const mdx = this.mouseDX
@@ -195,15 +204,15 @@ export class DesktopInput implements InputAdapter {
       fl.pitch = 0
     }
 
-    let thrust = forward === backward ? 0 : forward ? 1 : -1
-    let strafeX = left === right ? 0 : right ? 1 : -1
-    let strafeY = down === up ? 0 : up ? 1 : -1
+    let thrust = buttons.thrust
+    let strafeX = buttons.strafeX
+    let strafeY = buttons.strafeY
     let yaw = freeLook ? 0 : mouseYaw
     let pitch = freeLook ? 0 : mousePitch
-    let roll = rollLeft === rollRight ? 0 : rollRight ? 1 : -1
-    let firePrimary = this.primaryMouse
-    let fireSecondary = this.secondaryMouse
-    let boost = boostKey
+    let roll = buttons.roll
+    let firePrimary = buttons.firePrimary
+    let fireSecondary = buttons.fireSecondary
+    let boost = buttons.boost
 
     const gp = gamepad !== undefined ? gamepad : this.readFirstGamepad()
     if (gp) {
@@ -304,15 +313,6 @@ export class DesktopInput implements InputAdapter {
     out.firePrimary = readGamepadButtonPressed(buttons[0]) || rt > 0.5
     out.fireSecondary = readGamepadButtonPressed(buttons[1]) || lt > 0.5
     out.boost = readGamepadButtonPressed(buttons[10]) || readGamepadButtonPressed(buttons[3])
-  }
-
-  private resetMouseLook(): void {
-    this.mouseDX = 0
-    this.mouseDY = 0
-    this.freeLookState.yaw = 0
-    this.freeLookState.pitch = 0
-    this.freeLookState.deltaYaw = 0
-    this.freeLookState.deltaPitch = 0
   }
 
   private resetAxes(): void {
