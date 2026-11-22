@@ -3,11 +3,12 @@
 Monorepo do Asteroids 3D. Este repositório entrega a **Fase 1 (M1) — núcleo
 matemático e física determinística** no pacote isomórfico `shared/`, o **M0 —
 cliente Vite/TypeScript com servidor de desenvolvimento HTTPS confiável, status
-WebSocket e proxy `/ws` na mesma origem** (além do stub WS em `server/`) e o
+WebSocket e proxy `/ws` na mesma origem** (além do stub WS em `server/`), o
 **M2 — cockpit 3D procedural, pipeline de render tri-modal (Flat / VR Box / Quest 3
-WebXR) e HUD diegético com radar e offscreen pips, sem assets externos**. O
-servidor de jogo real, os inputs completos (M3) e o loop/IA (M4) ainda serão
-adicionados.
+WebXR) e HUD diegético com radar e offscreen pips, sem assets externos** e o
+**M3 — sistema de input cross-platform com normalização comum, InputManager e
+adaptadores Desktop/Touch/VR Box/Quest XR**. O servidor de jogo real e o
+loop/IA (M4) ainda serão adicionados.
 
 ## Pré-requisitos
 
@@ -64,9 +65,11 @@ pnpm dev:client            # atalho para pnpm -C client dev
 pnpm dev:server            # atalho para pnpm -C server dev
 ```
 
-Todos os comandos acima foram executados com sucesso (`exit 0`) nas verificações da Fase 1 e do M0.
-Os detalhes e a evidência estão em
-`docs/superpowers/specs/2026-11-22-fase-1-fisica-testes-design.md`.
+Todos os comandos acima foram executados com sucesso (`exit 0`) nas verificações das fases
+entregues. Evidências: Fase 1 (`docs/superpowers/specs/2026-11-22-fase-1-fisica-testes-design.md`),
+M0 (`docs/superpowers/specs/2026-11-22-fase-0-client-https-ws-design.md`), M2
+(`docs/superpowers/specs/2026-11-22-m2-render-cockpit-hud-design.md`) e M3
+(`docs/superpowers/specs/2026-11-22-m3-inputs-cross-platform-design.md`).
 
 ## HTTPS local (mkcert)
 
@@ -209,6 +212,65 @@ Preenchido apenas com itens realmente executados; o que não foi executado está
 | `pnpm -r test` | PASS — `client` 6 arquivos / 22 testes, `shared` 5 arquivos / 46 testes, `server` 1 teste. |
 | `pnpm -C client build` | PASS — `✓ 15 modules transformed`, `✓ built in 1.26s` (aviso pré-existente de chunk >500 kB do Three.js, não bloqueante). |
 
+## M3 — Controles Cross-Platform (US-08/09/10)
+
+O `client/src/input/` implementa normalização comum, `InputManager` e adaptadores por
+plataforma. A lógica pura fica em helpers testáveis; adaptadores são finos sobre APIs de browser/WebXR.
+
+- **Normalização global:** deadzone radial `0.15` com reescalonamento linear para `[0,1]`;
+  curva exponencial `v_out = sign(v) * |v|^1.6` para yaw e pitch; `clampAxis` em `[-1,1]`.
+- **ADR-01:** em VR, a cabeça controla apenas a câmera dentro do `PilotHeadRig`; nave/mira
+  são controladas por controles manuais. `VRBoxInput` aplica quatérnio ao head rig, não à nave.
+- **ADR-02:** Desktop suporta Alt para Free-Look temporário no cockpit (mouse move câmera,
+  não yaw/pitch da nave).
+
+### Mapeamentos resumidos
+
+| Plataforma | Controle | Mapeamento |
+| --- | --- | --- |
+| Desktop | W/S, A/D, Space/Ctrl, Q/E, Shift | thrust, strafeX, strafeY, roll, boost |
+| Desktop | Mouse (PointerLock) | yaw/pitch com curva 1.6 |
+| Desktop | LMB/RMB, Alt | firePrimary/fireSecondary; Alt = free-look temporário (ADR-02) |
+| Desktop | Gamepad padrão | left stick strafe, RT/LT thrust, right stick yaw/pitch 1.6, LB/RB roll, A/RT fire, B/LT missile, L3/Y boost |
+| Android Flat | Joystick esquerdo dinâmico | strafeX/thrust (deadzone radial 0.15) |
+| Android Flat | Joystick direito dinâmico | yaw/pitch com curva 1.6 |
+| Android Flat | Botões FIRE/MISSILE/BOOST | firePrimary auto-fire ao segurar, fireSecondary, boost |
+| VR Box | DeviceOrientation relativo (YXZ) | apenas `PilotHeadRig` (ADR-01), sem compass absoluto |
+| VR Box | Gamepad padrão / BT wizard 3 passos | eixos/botões mapeados; wizard persiste em `localStorage` |
+| VR Box | Fullscreen/Orientation/WakeLock | degradado com status quando API falha/indisponível |
+| Quest 3 | Left stick/trigger/Y/squeeze/X | strafeX/thrust, strafeY, boost, recenter on-edge |
+| Quest 3 | Right stick/trigger/squeeze | yaw/pitch curva 1.6, firePrimary, fireSecondary |
+| Quest 3 | Haptics | fire 0.2/25ms, missile 0.5/60ms, shield 0.85/150ms; no-op seguro |
+
+### Checklist manual M3 (validação em dispositivo)
+
+Preenchido apenas com itens realmente executados; o que não foi executado está `PENDENTE`.
+Validação automatizada de lógica/mapeamento puro **não** substitui validação em dispositivo.
+Fonte autoritativa: `docs/superpowers/specs/2026-11-22-m3-inputs-cross-platform-design.md`.
+
+| Plataforma | Controle mapeado | Comportamento esperado | Validado (SIM/NÃO/PENDENTE) | Evidência | Observações |
+| --- | --- | --- | --- | --- | --- |
+| Desktop (PC Chrome/Edge) | Teclado W/A/S/D/Space/Ctrl/Q/E/Shift | Translação/roll/boost conforme mapeamento | PENDENTE | `desktop-input-math`, `desktop-input` PASS (2026-11-22) | Sem navegador real/PointerLock exercitado neste ambiente. |
+| Desktop (PC Chrome/Edge) | Mouse PointerLock + Alt free-look | Yaw/pitch curva 1.6; Alt move só câmera (ADR-02) | PENDENTE | Testes automatizados PASS (2026-11-22); código auditado | Requer gesto de usuário e confirmação visual. |
+| Desktop (PC Chrome/Edge) | Gamepad padrão simultâneo | Deadzone radial 0.15, curva 1.6 yaw/pitch, botões mapeados | PENDENTE | Testes automatizados PASS (2026-11-22) | Gamepad físico não disponível. |
+| Android Flat (Chrome Android) | Joysticks dinâmicos + FIRE/MISSILE/BOOST | Multitouch por `Touch.identifier`, deadzone 0.15, curva 1.6 yaw/pitch, FIRE auto-fire | PENDENTE | `touch-input-math` PASS (2026-11-22) | Sem dispositivo touch real; validar latência/overlay. |
+| VR Box (Android + visor + gamepad BT) | Giroscópio relativo YXZ | Move apenas `PilotHeadRig` (ADR-01), sem compass absoluto | PENDENTE | `vrbox-math` PASS (2026-11-22); código ignora `absolute` | DeviceOrientation/WakeLock/Fullscreen variam por device. |
+| VR Box (Android + visor + gamepad BT) | Gamepad padrão/BT wizard 3 passos | Mapeamento padrão ou wizard sequencial com persistência localStorage | PENDENTE | `vrbox-wizard`, `gamepad-mapping` PASS (2026-11-22) | Requer gamepad BT físico não-standard. |
+| Quest 3 (Quest Browser/WebXR) | Controllers Touch + recenter | Sticks/triggers/squeeze/X mapeados; recenter on-edge; yaw/pitch curva 1.6 | PENDENTE | `quest-xr-mapping` PASS (2026-11-22) | Sessão `immersive-vr` real não exercitada. |
+| Quest 3 (Quest Browser/WebXR) | Haptics | Fire 0.2/25ms, missile 0.5/60ms, shield 0.85/150ms; no-op seguro | PENDENTE | Código auditado: `QuestXRInput` | Haptics reais não exercitados. |
+
+### Verificação automatizada M3 (executada em 2026-11-22)
+
+| Comando | Resultado |
+| --- | --- |
+| `pnpm -r typecheck` | PASS — `server`, `shared` e `client` `Done` (sem erros). |
+| `pnpm -r test` | PASS — `shared` 5 arquivos / 46 testes, `server` 1 teste, `client` 15 arquivos / 74 testes. |
+| `pnpm -C client build` | PASS — `✓ 26 modules transformed`, `dist/assets/index-Dojbt6sJ.js 583.86 kB │ gzip: 147.38 kB`, `✓ built in 1.30s` (aviso pré-existente de chunk >500 kB do Three.js, não bloqueante). |
+
+> **Limitações:** Giroscópio, WakeLock, PointerLock, Gamepad BT e WebXR haptics variam por
+> navegador/dispositivo. Não marcar como validado sem evidência. Qualquer input VR que mova nave
+> pela cabeça é bug de spec (ADR-01).
+
 ## Estrutura atual
 
 ```
@@ -229,22 +291,44 @@ client/
     ws-status.ts   # buildWsUrl() — URL WS na mesma origem (wss para https)
     style.css
     core/
-      GameApp.ts         # Scene/renderer, setAnimationLoop, estado mock, dispose
+      GameApp.ts         # Scene/renderer, setAnimationLoop, estado mock, input sync, dispose
       Starfield.ts       # campo estelar procedural sem assets
       CockpitRig.ts      # hierarquia ShipRoot/CockpitFrame/PilotHeadRig (spec 4.4)
       render-config.ts   # constantes barrel/IPD/DPR/XR
       RenderPipeline.ts  # FLAT / VR_BOX (estéreo + barrel) / QUEST_3 (WebXR)
+    input/
+      input-math.ts          # clampAxis, deadzone radial 0.15, curva exponencial 1.6
+      types.ts               # InputAdapter/InputState/NormalizedAxes
+      InputManager.ts        # orquestra adaptador ativo e gera ShipCommand
+      desktop-input-math.ts  # mapeamento puro de teclas/botões desktop
+      DesktopInput.ts        # teclado/mouse PointerLock/gamepad/Alt free-look (ADR-02)
+      TouchInput.ts          # joysticks dinâmicos multitouch + FIRE/MISSILE/BOOST
+      VRBoxInput.ts          # DeviceOrientation relativo YXZ, WakeLock/fullscreen, wizard BT
+      vrbox-math.ts          # deviceOrientationToQuaternionYXZ
+      vrbox-wizard.ts        # wizard sequencial de mapeamento BT (3 passos)
+      gamepad-mapping.ts     # persistência/validação de mapeamento em localStorage
+      QuestXRInput.ts        # WebXR XRInputSource, recenter, haptics seguros
+      quest-xr-mapping.ts    # mapeamento puro Quest Touch (deadzone/curva 1.6)
     ui/
       hud-math.ts        # helpers puros: radar/pip/throttle
       DiegeticHUD.ts     # CanvasTexture 512x256, dirty-flag 15Hz, radar
       OffscreenPips.ts   # pool de 16 setas radiais (sem alocação por frame)
   test/
-    ws-status.test.ts       # buildWsUrl (https → wss, http → ws)
-    render-config.test.ts   # constantes da spec + limites de IPD
-    hud-math.test.ts        # projeção radar/pip + throttle 15Hz
-    offscreen-pips.test.ts  # pips dentro/fora do FOV
-    diegetic-hud.test.ts     # sweep 15Hz com estado estático / idle com dt=0
+    ws-status.test.ts          # buildWsUrl (https → wss, http → ws)
+    render-config.test.ts      # constantes da spec + limites de IPD
+    hud-math.test.ts           # projeção radar/pip + throttle 15Hz
+    offscreen-pips.test.ts     # pips dentro/fora do FOV
+    diegetic-hud.test.ts       # sweep 15Hz com estado estático / idle com dt=0
     render-pipeline-xr.test.ts # botão Enter VR, sessão e falha recuperável (XR stubado)
+    input-math.test.ts         # deadzone radial, curva, clamp
+    input-manager.test.ts      # merge/prioridade/reset/dispose
+    desktop-input-math.test.ts # mapeamento puro teclado/mouse
+    desktop-input.test.ts      # comportamento do adapter desktop
+    touch-input-math.test.ts   # normalização/atribuição de toques
+    gamepad-mapping.test.ts    # persistência/validação de mapeamento
+    vrbox-math.test.ts         # quaternion YXZ e calibração de eixo
+    vrbox-wizard.test.ts       # wizard de mapeamento BT
+    quest-xr-mapping.test.ts   # mapeamento puro Quest XR
   vitest.config.ts
 server/
   package.json     # ws + tsx (scripts dev/test)
@@ -270,6 +354,9 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
 - Plano M2 (render/cockpit/HUD): `docs/superpowers/plans/2026-11-22-m2-render-cockpit-hud.md`
 - Design e verificação M2 (checklist Flat/VR Box/Quest 3): `docs/superpowers/specs/2026-11-22-m2-render-cockpit-hud-design.md`
 - SDD/ledger M2: `.superpowers/sdd/2026-11-22-m2-render-cockpit-hud/`
+- Plano M3 (inputs cross-platform): `docs/superpowers/plans/2026-11-22-m3-inputs-cross-platform.md`
+- Design e verificação M3 (checklist Desktop/Android Flat/VR Box/Quest 3): `docs/superpowers/specs/2026-11-22-m3-inputs-cross-platform-design.md`
+- SDD/ledger M3: `.superpowers/sdd/2026-11-22-m3-inputs-cross-platform/`
 
 ## Próximos passos
 
@@ -277,5 +364,9 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
   de certificado (requer desktop com diálogo de confiança da CA disponível).
 - M2 / US-05..07: validação em dispositivo do checklist acima (FPS, estereoscopia/barrel,
   HUD/pips, ausência de assets) — tudo `PENDENTE` neste ambiente.
-- M3: inputs Desktop/Touch/VR Box/Quest XR (D-Pad de IPD e botão X de recenter).
-- M4: loop solo em Worker + IA/ondas.
+- M3 / US-08..10: validação em dispositivo do checklist M3 (PointerLock, touch multitouch,
+  giroscópio/WakeLock, gamepad BT wizard, WebXR controllers/haptics) — tudo `PENDENTE`
+  neste ambiente. Não marcar validado sem evidência; qualquer input VR que mova nave pela
+  cabeça é bug de spec (ADR-01).
+- M4: integrar `InputManager.getCommand(tick)` ao loop local/Worker (LocalTransport/GameRoom)
+  para vertical slice jogável.
