@@ -25,9 +25,10 @@ const SWEEP_RAD_PER_SEC = 1.4
  * HUD diegético desenhado proceduralmente em um canvas 512x256 (ADR-04).
  *
  * A textura só é redesenhada — e `needsUpdate` só é setado — quando algum
- * valor exibido muda E o intervalo de 1/15s já se passou. Nenhum objeto é
- * alocado no hot-loop: comparações usam um snapshot Float32 e a projeção de
- * radar reutiliza um `RadarPoint` pré-alocado.
+ * valor exibido muda OU o sweep avança, E o intervalo de 1/15s já se passou.
+ * Assim o radar continua girando mesmo com estado estático. Nenhum objeto é
+ * alocado no hot-loop: comparações usam um snapshot Float64Array pré-alocado
+ * e a projeção de radar reutiliza um `RadarPoint` pré-alocado.
  */
 export class DiegeticHUD {
   private readonly canvas: HTMLCanvasElement
@@ -73,8 +74,11 @@ export class DiegeticHUD {
 
   /** Atualiza valores exibidos com dirty-check + throttle de 15Hz. */
   update(state: HudState, dt: number): void {
-    // O sweep é decorativo e independe do dirty-flag; avança em tempo real.
+    // O sweep é uma fonte de dirty própria: mesmo com estado estático o radar
+    // continua girando, então o redraw deve acontecer no teto de 15Hz.
+    const previousSweep = this.sweepAngle
     this.sweepAngle = (this.sweepAngle + dt * SWEEP_RAD_PER_SEC) % (2 * Math.PI)
+    if (this.sweepAngle !== previousSweep) this.dirty = true
 
     if (
       state.shield !== this.lastShield ||

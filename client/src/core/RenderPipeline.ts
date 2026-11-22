@@ -20,19 +20,24 @@ export interface RenderPipelineOptions {
   cockpitRoot: THREE.Object3D
   /** Opcional: onde ancorar o botão DOM "Enter VR". */
   container?: HTMLElement
+  /** Injeta a superfície WebXR (testes); por padrão usa `navigator.xr`. */
+  xr?: XrSystemLike | null
 }
 
 /** Superfície WebXR mínima consumida aqui; o input Quest completo chega em M3. */
-interface XrSessionLike {
+export interface XrSessionLike {
   addEventListener(type: 'end', listener: () => void): void
   removeEventListener(type: 'end', listener: () => void): void
   end(): Promise<void>
 }
 
-interface XrSystemLike {
+export interface XrSystemLike {
   isSessionSupported(mode: string): Promise<boolean>
   requestSession(mode: string, init?: { optionalFeatures?: string[] }): Promise<XrSessionLike>
 }
+
+/** Estado observável do botão "Enter VR" (expõe falhas na UI, não só no console). */
+export type XrStatus = 'idle' | 'unsupported' | 'ready' | 'entering' | 'error' | 'in-session'
 
 type WebXrSession = Parameters<THREE.WebGLRenderer['xr']['setSession']>[0]
 
@@ -114,17 +119,23 @@ export class RenderPipeline {
   private readonly quadMaterial: THREE.ShaderMaterial
   private readonly uniforms: BarrelUniforms
 
+  private readonly xr: XrSystemLike | null
+
   private mode: RenderMode = 'FLAT'
   private ipdMm: number
   private dpr = 1
+  private lastTargetW = 1
+  private lastTargetH = 1
   private vrButton: HTMLButtonElement | null = null
   private activeSession: XrSessionLike | null = null
+  private xrStatus: XrStatus = 'idle'
   private disposed = false
 
   constructor(options: RenderPipelineOptions) {
     this.renderer = options.renderer
     this.headCamera = options.camera
     this.container = options.container
+    this.xr = options.xr !== undefined ? options.xr : this.readNavigatorXr()
 
     const head = this.headCamera
     this.pilotHeadRig = options.cockpitRoot.getObjectByName('PilotHeadRig') ?? null
@@ -184,6 +195,11 @@ export class RenderPipeline {
     return this.ipdMm
   }
 
+  /** Estado do botão VR — permite à UI/testes detectar falhas sem ler o console. */
+  getXrStatus(): XrStatus {
+    return this.xrStatus
+  }
+
   /** Troca de modo; XR nunca é solicitado aqui (requestSession exige gesto do usuário). */
   async setMode(mode: RenderMode): Promise<void> {
     if (this.disposed) return
@@ -192,6 +208,7 @@ export class RenderPipeline {
       const session = this.renderer.xr.getSession()
       if (session !== null) void session.end().catch(() => {})
       this.removeVrButton()
+      this.xrStatus = 'idle'
     }
 
     this.mode = mode
@@ -232,12 +249,18 @@ export class RenderPipeline {
     this.headCamera.updateProjectionMatrix()
     this.syncEyeCameras()
 
+    // Redimensiona apenas quando o tamanho realmente muda (evita setSize em
+    // todo resize e em modos que não usam os targets, como FLAT/QUEST_3).
     const targetW = Math.max(1, Math.floor((w * this.dpr) / 2))
     const targetH = Math.max(1, Math.floor(h * this.dpr))
-    this.targetL.setSize(targetW, targetH)
-    this.targetR.setSize(targetW, targetH)
-    this.uniforms.uLeft.value = this.targetL.texture
-    this.uniforms.uRight.value = this.targetR.texture
+    if (targetW !== this.lastTargetW || targetH !== this.lastTargetH) {
+      this.targetL.setSize(targetW, targetH)
+      this.targetR.setSize(targetW, targetH)
+      this.lastTargetW = targetW
+      this.lastTargetH = targetH
+      this.uniforms.uLeft.value = this.targetL.texture
+      this.uniforms.uRight.value = this.targetR.texture
+    }
   }
 
   /** Dev hook (teclas no main); D-Pad do gamepad Quest fica para M3. */
@@ -339,22 +362,30 @@ export class RenderPipeline {
     }
   }
 
-  private getXr(): XrSystemLike | null {
+  private readNavigatorXr(): XrSystemLike | null {
     if (typeof navigator === 'undefined') return null
     return (navigator as Navigator & { xr?: XrSystemLike }).xr ?? null
   }
 
   private async ensureVrButton(): Promise<void> {
-    const xr = this.getXr()
-    if (xr === null) return
+    const xr = this.xr
+    if (xr === null) {
+      this.xrStatus = 'unsupported'
+      return
+    }
     let supported = false
     try {
       supported = await xr.isSessionSupported(XR_SESSION_MODE)
     } catch {
       supported = false
     }
-    if (!supported || this.disposed || this.mode !== 'QUEST_3') return
+    if (!supported) {
+      this.xrStatus = 'unsupported'
+      return
+    }
+    if (this.disposed || this.mode !== 'QUEST_3') return
     if (this.vrButton !== null) return
+    this.xrStatus = 'ready'
 
     const button = document.createElement('button')
     button.type = 'button'
@@ -386,8 +417,13 @@ export class RenderPipeline {
   }
 
   private async enterVr(): Promise<void> {
-    const xr = this.getXr()
+    const xr = this.xr
     if (xr === null || this.disposed) return
+    this.xrStatus = 'entering'
+    if (this.vrButton !== null) {
+      this.vrButton.disabled = true
+      this.vrButton.textContent = 'Entering VR…'
+    }
     try {
       const session = await xr.requestSession(XR_SESSION_MODE, {
         optionalFeatures: ['local-floor', 'hand-tracking', 'layers'],
@@ -396,9 +432,16 @@ export class RenderPipeline {
       await this.renderer.xr.setSession(session as unknown as WebXrSession)
       this.activeSession = session
       session.addEventListener('end', this.handleXrSessionEnd)
+      this.xrStatus = 'in-session'
       if (this.vrButton !== null) this.vrButton.disabled = true
     } catch (error) {
       console.warn('[render] unable to start immersive-vr session', error)
+      this.xrStatus = 'error'
+      // Falha visível na UI: texto de erro e botão reabilitado para nova tentativa.
+      if (this.vrButton !== null) {
+        this.vrButton.disabled = false
+        this.vrButton.textContent = 'VR failed — retry'
+      }
     }
   }
 
@@ -407,6 +450,10 @@ export class RenderPipeline {
       this.activeSession.removeEventListener('end', this.handleXrSessionEnd)
       this.activeSession = null
     }
-    if (this.vrButton !== null) this.vrButton.disabled = false
+    this.xrStatus = 'ready'
+    if (this.vrButton !== null) {
+      this.vrButton.disabled = false
+      this.vrButton.textContent = 'Enter VR'
+    }
   }
 }

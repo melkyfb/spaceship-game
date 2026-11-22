@@ -40,15 +40,14 @@
 - `client/src/ui/OffscreenPips.ts` — cálculo/projeção de pips radiais para ameaças fora do FOV.
 - `client/src/ui/hud-math.ts` — funções puras testáveis: clamp, radar projection, pip angle/visibility.
 - `client/test/hud-math.test.ts` — testes Vitest para radar/pip/dirty logic helpers.
-- `client/test/render-config.test.ts` — testes de constantes/config de render (DPR, FOV, barrel k1/k2, IPD bounds).
+- `client/test/render-config.test.ts` — testes de constantes/config de render (DPR, barrel k1/k2, IPD bounds/clamp). FOV não é constantizada nem testada nesta entrega (fica na câmera do `CockpitRig`).
 - `docs/superpowers/specs/2026-11-22-m2-render-cockpit-hud-design.md` — evidências/limitações de validação.
 
 ### Modificar
 - `client/package.json` — adicionar `three` e `@types/three` (ou tipos incluídos conforme versão).
 - `client/src/main.ts` — substituir placeholder M0 por bootstrap do `GameApp` mantendo diagnóstico WS opcional.
-- `client/index.html` — container para canvas/app, sem assets externos.
-- `client/src/style.css` — fullscreen canvas, overlay mínimo.
 - `README.md` — instruções M2, modos de render, limitações de validação VR.
+- **Não alterados na entrega real:** `client/index.html` e `client/src/style.css` (já prontos no M0 e reutilizados como estão).
 
 ### Responsabilidades
 - `hud-math.ts`: matemática pura, sem Three/WebXR/DOM.
@@ -315,3 +314,16 @@ git commit -m "docs: add M2 render cockpit hud verification checklist"
 - **Validação de dispositivo:** não marcar Quest 3/VR Box/Android como validado sem execução real. Registrar PENDENTE.
 - **Performance:** revisar hot paths por alocações (`new`, arrays temporários) antes de fechar M2.
 - **Próxima fase após M2:** M3 (Inputs Desktop/Touch/VRBox/QuestXR) e depois M4 (loop solo Worker + IA/ondas).
+
+## Ajustes da revisão final (fix wave)
+
+Entrega efetiva após a revisão de toda a branch (detalhes em
+`.superpowers/sdd/2026-11-22-m2-render-cockpit-hud/task-final-fix-report.md`):
+
+- O sweep do radar é fonte de dirty própria: o HUD redesenha no teto de 15Hz mesmo
+  com estado estático. Coberto por `client/test/diegetic-hud.test.ts`.
+- O fluxo "Enter VR" passou a expor falha na UI (texto do botão + `getXrStatus()`),
+  com `navigator.xr` injetável para testes. Coberto por
+  `client/test/render-pipeline-xr.test.ts`.
+- Os render targets de olho só são redimensionados quando o tamanho muda.
+- O hook de dev `keydown` de `main.ts` é removido no `beforeunload`.

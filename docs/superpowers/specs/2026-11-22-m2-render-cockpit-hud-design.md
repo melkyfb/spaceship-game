@@ -39,9 +39,11 @@ mock e isolado para substituição nas fases seguintes (YAGNI).
 | `client/src/ui/hud-math.ts` | 4 | Helpers puros: `clamp`, `normalizeAngle`, `projectToRadar`, `computePip`, `shouldUpdateHud`. |
 | `client/src/ui/DiegeticHUD.ts` | 4 | CanvasTexture 512×256, dirty-flag 15Hz, barras/score/wave/radar. |
 | `client/src/ui/OffscreenPips.ts` | 4 | Pool fixo de 16 setas radiais, projeção por câmera sem alocação. |
-| `client/test/render-config.test.ts` | 3 | Constantes da spec + limites de IPD. |
+| `client/test/render-config.test.ts` | 3 | Constantes barrel/DPR + limites de IPD (sem FOV — a câmera fica no `CockpitRig`). |
 | `client/test/hud-math.test.ts` | 4 | 9 testes de radar/pip/throttle. |
 | `client/test/offscreen-pips.test.ts` | 4 (fix) | Pips para contatos fora do FOV; nenhum pip para contatos dentro. |
+| `client/test/diegetic-hud.test.ts` | revisão final | Sweep como fonte de dirty: redraw 15Hz com estado estático; ocioso com `dt=0`. |
+| `client/test/render-pipeline-xr.test.ts` | revisão final | Fluxo Enter VR com XR/renderer/DOM stubados: suporte, clique, fim de sessão e falha recuperável. |
 
 ## 3. Hierarquia `CockpitRig` implementada (spec 4.4 / US-05)
 
@@ -81,7 +83,7 @@ Seleção por `?render=FLAT|VR_BOX|QUEST_3` (gravado em `localStorage`, chave
 | --- | --- |
 | **FLAT** | `xr.enabled = false`; `setPixelRatio(min(devicePixelRatio, 2))`; `setSize(w, h, false)`; `renderer.render(scene, camera)` direto; `resize` atualiza `aspect`/`projectionMatrix`. |
 | **VR_BOX** | Duas câmeras de olho criadas uma vez **como filhas da câmera da cabeça** (herdam o pose de `PilotHeadRig`, ADR-01), em `x = ±IPD/2` metros. Dois `WebGLRenderTarget`s `(w·dpr)/2 × (h·dpr)` renderizam L/R; um quad full-screen compõe as duas metades com shader Brown-Conrady (radial `r²`/`r⁴`), preto fora de `[0,1]` para o canto arredondado do visor. Exatamente 3 chamadas `render()` por frame (olho L, olho R, quad). |
-| **QUEST_3** | `xr.enabled = true`, `referenceSpaceType = 'local'`. Detecta `immersive-vr` via `navigator.xr.isSessionSupported` e injeta o botão DOM "Enter VR"; no clique (gesto do usuário) solicita sessão `immersive-vr` com `optionalFeatures: ['local-floor', 'hand-tracking', 'layers']` e entrega a `renderer.xr.setSession()`. Fim de sessão reabilita o botão; sair do modo encerra a sessão e remove o botão. `GameApp` usa `renderer.setAnimationLoop`, que aciona tanto o rAF desktop quanto o rAF da sessão WebXR. |
+| **QUEST_3** | `xr.enabled = true`, `referenceSpaceType = 'local'`. Detecta `immersive-vr` via `navigator.xr.isSessionSupported` (surface injetável via `RenderPipelineOptions.xr` para testes) e injeta o botão DOM "Enter VR"; no clique (gesto do usuário) solicita sessão `immersive-vr` com `optionalFeatures: ['local-floor', 'hand-tracking', 'layers']` e entrega a `renderer.xr.setSession()`. Fim de sessão reabilita o botão; sair do modo encerra a sessão e remove o botão. Falha de `requestSession` aparece na UI (texto "VR failed — retry" + `getXrStatus() === 'error'`), com o botão reabilitado para nova tentativa — não apenas `console.warn`. `GameApp` usa `renderer.setAnimationLoop`, que aciona tanto o rAF desktop quanto o rAF da sessão WebXR. |
 
 ### 4.1 Constantes da spec (`client/src/core/render-config.ts`)
 
@@ -104,9 +106,11 @@ Seleção por `?render=FLAT|VR_BOX|QUEST_3` (gravado em `localStorage`, chave
   anéis, cruz, sweep giratório e blips cujo tamanho/opacidade variam com a proximidade (`depth`).
 - **Dirty-flag + teto 15Hz:** `update(state, dt)` marca `dirty` quando shield/energy/score/wave ou
   contagem/posições mudam (comparação contra snapshot `Float64Array` pré-alocado — f64 preserva
-  posições exatas). Só redesenha e seta `texture.needsUpdate = true` quando `dirty` **e**
+  posições exatas), **ou quando o sweep avança** — fonte de dirty própria para que o radar continue
+  girando com estado estático. Só redesenha e seta `texture.needsUpdate = true` quando `dirty` **e**
   `shouldUpdateHud(accumulator, dt, 1/15)` é verdadeiro; o acumulador é zerado a cada redesenho,
-  tornando impossível exceder 15Hz com `dt > 0`. O sweep avança em tempo real fora do dirty-check.
+  tornando impossível exceder 15Hz com `dt > 0`. Com `dt = 0` (sweep congelado) e estado estático,
+  a textura permanece intacta.
 - **Offscreen pips:** pool fixo de 16 triângulos no grupo `OffscreenPips`; `update` converte cada
   contato para espaço da câmera (`worldToLocal`), calcula projeção via `projectionMatrix`, marca
   `behind` quando `z_view > 0` e usa `|clip.x/y| > |z_view|` para detectar fora do FOV. A seta é
@@ -131,12 +135,18 @@ task.
 | Comando | Esperado (brief) | Status | Evidência observada |
 | --- | --- | --- | --- |
 | `pnpm -r typecheck` | PASS | **PASS** | `Scope: 3 of 4 workspace projects`; `client typecheck: Done`, `server typecheck: Done`, `shared typecheck: Done` (`tsc --noEmit`, sem diagnósticos); `exit 0`. |
-| `pnpm -r test` | PASS | **PASS** | `client`: 4 arquivos / **15 testes**; `shared`: 5 arquivos / **46 testes**; `server`: **1 teste** (`hello on connect and pong on ping`, `pass 1 / fail 0`); todos `Done`; `exit 0`. |
+| `pnpm -r test` | PASS | **PASS** | `client`: 6 arquivos / **22 testes**; `shared`: 5 arquivos / **46 testes**; `server`: **1 teste** (`hello on connect and pong on ping`, `pass 1 / fail 0`); todos `Done`; `exit 0`. |
 | `pnpm -C client build` | PASS | **PASS** | `tsc --noEmit && vite build`; `✓ 15 modules transformed`; `dist/index.html 0.43 kB`, `dist/assets/index-*.css 0.52 kB`, `dist/assets/index-*.js 548.12 kB` (gzip 138.28 kB); `✓ built in 1.26s`; `exit 0`. |
 
-A suíte do cliente cobre `ws-status` (2), `render-config` (2), `hud-math` (9) e
-`offscreen-pips` (2). O aviso do Vite sobre chunk >500 kB é **pré-existente** e não bloqueante:
-vem do bundle do Three.js, não de assets externos (ADR-04).
+A suíte do cliente cobre `ws-status` (2), `render-config` (2), `hud-math` (9),
+`offscreen-pips` (2), `diegetic-hud` (2 — sweep 15Hz com estado estático) e
+`render-pipeline-xr` (5 — botão/sessão/falha do Enter VR). O aviso do Vite sobre chunk >500 kB
+é **pré-existente** e não bloqueante: vem do bundle do Three.js, não de assets externos (ADR-04).
+
+Reexecução após a revisão final (fix wave): `pnpm -r typecheck` PASS, `pnpm -r test` PASS
+(cliente 6 arquivos / 22 testes), `pnpm -C client build` PASS (`✓ 15 modules transformed`,
+`dist/assets/index-*.js 548.93 kB / gzip 138.50 kB`, `✓ built in ~1.1s`). O aviso de chunk
+>500 kB permanece pré-existente e não bloqueante.
 
 ## 7. Auditoria de alocações no hot-loop (Notas de Execução)
 
@@ -147,7 +157,7 @@ Revisão dos caminhos executados a cada frame (`GameApp.tick` →
 | --- | --- |
 | `GameApp.tick` e `updateMockState` | Sem `new`, arrays literais ou closures; apenas primitivas e mutação de campos. |
 | `CockpitRig.update` | Apenas `Math.sin` e `reticle.scale.set(...)`. |
-| `RenderPipeline.render` / `renderVrBox` | Apenas `.copy()`, `.setRenderTarget()` e `.render()`; olhos, targets, quad e uniforms pré-alocados no construtor; `resize()` reusa os targets via `setSize()`. |
+| `RenderPipeline.render` / `renderVrBox` | Apenas `.copy()`, `.setRenderTarget()` e `.render()`; olhos, targets, quad e uniforms pré-alocados no construtor. `resize()` chama `setSize()` nos targets **somente quando as dimensões mudam**, guardado por `lastTargetW/lastTargetH`. |
 | `OffscreenPips.update` | Dois `Vector3`/`Vector4` de scratch e um `PipResult` de scratch; laço por índice; só reescreve transforms do pool. |
 | `DiegeticHUD.update` | Scratches pré-alocados e snapshot `Float64Array`; `new`/formatação de string/template literals ficam exclusivamente em `draw()`, limitado a 15Hz. |
 
@@ -189,8 +199,10 @@ A mesma tabela está no `README.md`.
 3. **HTTPS ao vivo pendente (herdado do M0).** A CA do mkcert exige aceite humano numa janela
    nativa do Windows; o Vite não escutou em 5173 neste desktop. Sem isso, nenhuma linha do §8
    pode ser executada aqui.
-4. **Radar/sweep.** O sweep só é redesenhado quando outro valor muda (para respeitar o teto de
-   15Hz); com os dados mock os contatos mudam a cada frame, então ele anima normalmente.
+4. **Radar/sweep — resolvido na revisão final.** Antes o sweep só era redesenhado quando outro
+   valor mudava; com estado estático ele congelava. Agora o avanço do sweep é uma fonte de dirty
+   própria, respeitando o teto de 15Hz (`client/test/diegetic-hud.test.ts`). Continua **PENDENTE**
+   apenas a conferência visual em dispositivo do movimento do radar.
 5. **Próximas fases:** M3 (Inputs Desktop/Touch/VRBox/QuestXR) e M4 (loop solo em Worker +
    IA/ondas). Nenhum desses elementos foi adicionado aqui (YAGNI).
 

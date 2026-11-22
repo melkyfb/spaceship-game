@@ -41,12 +41,13 @@ void game.setRenderMode(selectRenderMode()).then(() => {
 
 // Hooks de dev: IPD por [ ] e recenter por R. O mapeamento final (D-Pad/botão X
 // do Quest) pertence ao M3 — aqui só expomos os métodos já estruturados.
-window.addEventListener('keydown', (event: KeyboardEvent) => {
+const handleDevKeyDown = (event: KeyboardEvent): void => {
   if (event.ctrlKey || event.metaKey || event.altKey) return
   if (event.key === '[') game.adjustIpd(-1)
   else if (event.key === ']') game.adjustIpd(1)
   else if (event.key.toLowerCase() === 'r') game.recenter()
-})
+}
+window.addEventListener('keydown', handleDevKeyDown)
 
 // M0 WebSocket diagnostic is kept as an unobtrusive overlay; it stays out of the render loop.
 const wsStatus = document.createElement('p')
@@ -102,5 +103,6 @@ socket.addEventListener('close', (event: CloseEvent) => {
 })
 
 window.addEventListener('beforeunload', () => {
+  window.removeEventListener('keydown', handleDevKeyDown)
   game.dispose()
 })

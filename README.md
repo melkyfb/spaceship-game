@@ -174,8 +174,11 @@ spec em `client/src/core/render-config.ts`: barrel `k1 = 0.22`, `k2 = 0.24`, IPD
 `56–74 mm` (default `64`), `MAX_DPR = 2`, WebXR `immersive-vr` + `local`.
 
 Selecione o modo por query: `?render=FLAT` (padrão), `?render=VR_BOX` ou
-`?render=QUEST_3`. Hooks de dev apenas: `[`/`]` ajustam o IPD em ±1 mm e `R` faz
-`recenter()`. O mapeamento final (D-Pad no VR Box / botão X no Quest) chega no **M3**.
+`?render=QUEST_3`. No modo Quest 3, o botão "Enter VR" aparece quando `immersive-vr` é
+suportado; falha ao entrar aparece no próprio botão ("VR failed — retry", reabilitado para
+nova tentativa) e em `getXrStatus()`. Hooks de dev apenas: `[`/`]` ajustam o IPD em ±1 mm e
+`R` faz `recenter()` (o listener é removido no `beforeunload`). O mapeamento final
+(D-Pad no VR Box / botão X no Quest) chega no **M3**.
 
 > **ADR-04:** nenhum asset externo e nenhum pós-processamento pesado — a distorção do
 > VR Box é um shader procedural e o HUD é desenhado em canvas gerado em código.
@@ -203,7 +206,7 @@ Preenchido apenas com itens realmente executados; o que não foi executado está
 | Comando | Resultado |
 | --- | --- |
 | `pnpm -r typecheck` | PASS — `client`, `server` e `shared` `Done` (sem erros/warnings). |
-| `pnpm -r test` | PASS — `client` 4 arquivos / 15 testes, `shared` 5 arquivos / 46 testes, `server` 1 teste. |
+| `pnpm -r test` | PASS — `client` 6 arquivos / 22 testes, `shared` 5 arquivos / 46 testes, `server` 1 teste. |
 | `pnpm -C client build` | PASS — `✓ 15 modules transformed`, `✓ built in 1.26s` (aviso pré-existente de chunk >500 kB do Three.js, não bloqueante). |
 
 ## Estrutura atual
@@ -240,6 +243,8 @@ client/
     render-config.test.ts   # constantes da spec + limites de IPD
     hud-math.test.ts        # projeção radar/pip + throttle 15Hz
     offscreen-pips.test.ts  # pips dentro/fora do FOV
+    diegetic-hud.test.ts     # sweep 15Hz com estado estático / idle com dt=0
+    render-pipeline-xr.test.ts # botão Enter VR, sessão e falha recuperável (XR stubado)
   vitest.config.ts
 server/
   package.json     # ws + tsx (scripts dev/test)
