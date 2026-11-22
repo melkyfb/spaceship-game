@@ -97,6 +97,19 @@ describe('ENEMY_ARCHETYPES constants', () => {
     expect(ENEMY_ARCHETYPES.SCAVENGER.hp).toBe(60)
     expect(ENEMY_ARCHETYPES.SCAVENGER.speed).toBe(48)
   })
+
+  it('defines explicit SCOUT burst and projectile contract', () => {
+    expect(ENEMY_ARCHETYPES.SCOUT.fireConeDeg).toBe(15)
+    expect(ENEMY_ARCHETYPES.SCOUT.projectileSpeed).toBe(180)
+    expect(ENEMY_ARCHETYPES.SCOUT.primaryBurstCount).toBe(2)
+  })
+
+  it('defines explicit BRUISER missile contract', () => {
+    expect(ENEMY_ARCHETYPES.BRUISER.missileSpeed).toBe(65)
+    expect(ENEMY_ARCHETYPES.BRUISER.missileHp).toBe(10)
+    expect(ENEMY_ARCHETYPES.BRUISER.missileHoming).toBe(true)
+    expect(ENEMY_ARCHETYPES.BRUISER.missileDestroyableByLasers).toBe(true)
+  })
 })
 
 describe('EnemyAI - SCOUT', () => {
@@ -234,11 +247,22 @@ describe('EnemyAI - 5-ray avoidance', () => {
 })
 
 describe('EnemyAI - firing', () => {
-  it('SCOUT fires primary when target is in front within <15° cone', () => {
-    const enemy = makeEnemy({ archetype: 'SCOUT', pos: [0, 0, 0] })
-    const player = makeShip({ id: 'p1', pos: [80, 0, 0], alive: true }) // directly ahead
+  it('SCOUT fires primary double burst when target is within <15° cone of current forward', () => {
+    // Identity rot faces -Z in our convention.
+    const enemy = makeEnemy({ archetype: 'SCOUT', pos: [0, 0, 0], rot: [0, 0, 0, 1] })
+    const player = makeShip({ id: 'p1', pos: [0, 0, -80], alive: true }) // directly ahead (-Z)
     const intent = runAI(enemy, [player], [], [], 0)
     expect(intent.firePrimary).toBe(true)
+    expect(intent.primaryBurstCount).toBe(2)
+  })
+
+  it('SCOUT does not fire primary when target is outside 15° cone of current forward', () => {
+    // Identity forward is -Z. Target at ~16.7° off-axis should be outside 15° cone.
+    const enemy = makeEnemy({ archetype: 'SCOUT', pos: [0, 0, 0], rot: [0, 0, 0, 1] })
+    const player = makeShip({ id: 'p1', pos: [30, 0, -100], alive: true }) // ~16.7° from -Z
+    const intent = runAI(enemy, [player], [], [], 0)
+    expect(intent.firePrimary).toBe(false)
+    expect(intent.primaryBurstCount).toBe(0)
   })
 
   it('BRUISER fires secondary (missile) when it has a target', () => {
@@ -250,7 +274,7 @@ describe('EnemyAI - firing', () => {
 })
 
 describe('EnemyAI - SCAVENGER death drops', () => {
-  it('drops 2 crystals (Shield + Energy) on death helper', () => {
+  it('drops 2 crystals (Shield + Energy) on death helper with deterministic small offset', () => {
     const enemy = makeEnemy({ archetype: 'SCAVENGER', hp: 60, pos: [10, 20, 30] })
     let nextId = 500
     const drops = createScavengerDeathDrops(enemy, () => nextId++)
@@ -258,11 +282,28 @@ describe('EnemyAI - SCAVENGER death drops', () => {
     const kinds = drops.map((d) => d.kind).sort()
     expect(kinds).toEqual(['ENERGY_CRYSTAL', 'SHIELD_CRYSTAL'])
     for (const d of drops) {
-      expect(d.pos[0]).toBe(10)
+      expect(d.id).toBeGreaterThanOrEqual(500)
       expect(d.pos[1]).toBe(20)
       expect(d.pos[2]).toBe(30)
-      expect(d.id).toBeGreaterThanOrEqual(500)
+      // Small deterministic offset around death position; not co-located
+      expect(Math.abs(d.pos[0] - 10)).toBeGreaterThan(0)
+      expect(Math.abs(d.pos[0] - 10)).toBeLessThan(5)
     }
+    expect(drops[0]!.pos[0]).not.toBe(drops[1]!.pos[0])
+  })
+})
+
+describe('EnemyAI - guards', () => {
+  it('returns reset intent for dead enemy (hp <= 0)', () => {
+    const enemy = makeEnemy({ archetype: 'SCOUT', hp: 0, pos: [0, 0, 0] })
+    const player = makeShip({ id: 'p1', pos: [0, 0, -80], alive: true })
+    const intent = runAI(enemy, [player], [], [], 1)
+    expect(intent.moveX).toBe(0)
+    expect(intent.moveY).toBe(0)
+    expect(intent.moveZ).toBe(0)
+    expect(intent.firePrimary).toBe(false)
+    expect(intent.primaryBurstCount).toBe(0)
+    expect(intent.fireSecondary).toBe(false)
   })
 })
 

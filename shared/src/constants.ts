@@ -61,6 +61,7 @@ export const ENEMY_ARCHETYPES = {
     strafeRange: 120,
     fireConeDeg: 15,
     projectileSpeed: 180,
+    primaryBurstCount: 2,
   },
   BRUISER: {
     hp: 180,
@@ -68,6 +69,8 @@ export const ENEMY_ARCHETYPES = {
     orbitRange: 140,
     missileSpeed: 65,
     missileHp: 10,
+    missileHoming: true,
+    missileDestroyableByLasers: true,
   },
   SCAVENGER: {
     hp: 60,

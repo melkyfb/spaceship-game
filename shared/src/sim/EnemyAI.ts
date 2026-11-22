@@ -13,6 +13,9 @@ export interface EnemyIntent {
   faceY: number
   faceZ: number
   firePrimary: boolean
+  /** Number of projectiles in this primary burst (SCOUT: 2 when firing, else 0). */
+  primaryBurstCount: number
+  /** Secondary fire intent (BRUISER missile: 65 u/s, HP 10, homing, laser-destructible; see ENEMY_ARCHETYPES.BRUISER). */
   fireSecondary: boolean
 }
 
@@ -25,6 +28,7 @@ export function createEnemyIntent(): EnemyIntent {
     faceY: 0,
     faceZ: 1,
     firePrimary: false,
+    primaryBurstCount: 0,
     fireSecondary: false,
   }
 }
@@ -37,6 +41,7 @@ function resetIntent(out: EnemyIntent): void {
   out.faceY = 0
   out.faceZ = 1
   out.firePrimary = false
+  out.primaryBurstCount = 0
   out.fireSecondary = false
 }
 
@@ -67,6 +72,23 @@ const S = {
   tx: 0, ty: 0, tz: 0,
   // scavenger target scratch
   tgx: 0, tgy: 0, tgz: 0,
+}
+
+function forwardFromRot(rot: readonly [number, number, number, number]): void {
+  // Rotate local forward (0,0,-1) by quaternion [x,y,z,w].
+  let qx = finite(rot[0])
+  let qy = finite(rot[1])
+  let qz = finite(rot[2])
+  let qw = finite(rot[3], 1)
+  const ql = Math.hypot(qx, qy, qz, qw)
+  if (ql <= 1e-9) {
+    S.tx = 0; S.ty = 0; S.tz = -1
+    return
+  }
+  qx /= ql; qy /= ql; qz /= ql; qw /= ql
+  S.tx = -2 * qx * qz - 2 * qw * qy
+  S.ty = -2 * qy * qz + 2 * qw * qx
+  S.tz = -1 + 2 * qx * qx + 2 * qy * qy
 }
 
 function setBasisFromForward(fx: number, fy: number, fz: number): void {
@@ -304,10 +326,16 @@ function stepScout(
   out.faceY = fy
   out.faceZ = fz
 
-  // Fire primary when target within <15° cone of facing
-  const faceDot = out.faceX * fx + out.faceY * fy + out.faceZ * fz
-  const cos15 = Math.cos((15 * Math.PI) / 180)
-  out.firePrimary = faceDot > cos15
+  // Fire primary when target within <15° cone of current forward.
+  forwardFromRot(enemy.rot)
+  const curFx = S.tx
+  const curFy = S.ty
+  const curFz = S.tz
+  const faceDot = curFx * fx + curFy * fy + curFz * fz
+  const cos15 = Math.cos((ENEMY_ARCHETYPES.SCOUT.fireConeDeg * Math.PI) / 180)
+  const inCone = faceDot > cos15
+  out.firePrimary = inCone
+  out.primaryBurstCount = inCone ? ENEMY_ARCHETYPES.SCOUT.primaryBurstCount : 0
 }
 
 function stepBruiser(
@@ -377,7 +405,7 @@ function stepBruiser(
   out.faceY = fy
   out.faceZ = fz
 
-  // Slow homing missile
+  // Slow homing missile: 65 u/s, HP 10, homing, destructible by lasers (ENEMY_ARCHETYPES.BRUISER)
   out.fireSecondary = true
 }
 
@@ -499,6 +527,7 @@ export function stepEnemyAI(
   out: EnemyIntent,
 ): void {
   resetIntent(out)
+  if (!(finite(enemy.hp, 0) > 0)) return
   const time = finite(timeSec, 0)
 
   switch (enemy.archetype) {
@@ -527,7 +556,11 @@ export interface ScavengerDrop {
   ttl: number
 }
 
-/** Creates the 2 crystals dropped by a dead SCAVENGER (Shield + Energy). Deterministic given nextId. */
+/**
+ * Creates the 2 crystals dropped by a dead SCAVENGER (Shield + Energy).
+ * Deterministic given nextId. Drops are offset slightly to avoid exact overlap.
+ * Caller should invoke on SCAVENGER death; function is defensive and still returns drops.
+ */
 export function createScavengerDeathDrops(
   enemy: EnemyState,
   nextId: () => number,
@@ -535,8 +568,9 @@ export function createScavengerDeathDrops(
   const x = finite(enemy.pos[0])
   const y = finite(enemy.pos[1])
   const z = finite(enemy.pos[2])
+  const off = 1.5
   return [
-    { id: nextId(), kind: 'SHIELD_CRYSTAL', pos: [x, y, z], ttl: 30 },
-    { id: nextId(), kind: 'ENERGY_CRYSTAL', pos: [x, y, z], ttl: 30 },
+    { id: nextId(), kind: 'SHIELD_CRYSTAL', pos: [x - off, y, z], ttl: 30 },
+    { id: nextId(), kind: 'ENERGY_CRYSTAL', pos: [x + off, y, z], ttl: 30 },
   ]
 }
