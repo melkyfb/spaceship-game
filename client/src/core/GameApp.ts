@@ -2,9 +2,15 @@ import * as THREE from 'three'
 import { CockpitRig } from './CockpitRig'
 import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield } from './Starfield'
+import { DiegeticHUD } from '../ui/DiegeticHUD'
+import { OffscreenPips } from '../ui/OffscreenPips'
+import type { Contact, HudState } from '../ui/hud-math'
 
 const STAR_COUNT = 2000
 const STARFIELD_SPIN_RAD_PER_SEC = 0.006
+/** Dados mock isolados para validar HUD/radar/pips (substituíveis por estado real). */
+const MOCK_CONTACT_COUNT = 8
+const MOCK_WAVE_SECONDS = 12
 
 /** Bootstrap da cena Three.js: cena, câmera, renderer, loop e ciclo de vida. */
 export class GameApp {
@@ -16,6 +22,11 @@ export class GameApp {
   private readonly cockpit: CockpitRig
   private readonly starfield: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>
   private readonly pipeline: RenderPipeline
+  private readonly hud: DiegeticHUD
+  private readonly pips: OffscreenPips
+  private readonly mockState: HudState
+  private readonly mockContacts: Contact[] = []
+  private mockTime = 0
   private readonly clock = new THREE.Clock()
   private running = false
   private disposed = false
@@ -51,6 +62,21 @@ export class GameApp {
 
     this.starfield = createStarfield(STAR_COUNT)
     this.scene.add(this.starfield)
+
+    // HUD diegético + pips alimentados por estado mock (isolado para M3/M4).
+    for (let i = 0; i < MOCK_CONTACT_COUNT; i++) {
+      this.mockContacts.push({ position: { x: 0, y: 0, z: 0 } })
+    }
+    this.mockState = {
+      shield: 1,
+      energy: 1,
+      score: 0,
+      wave: 1,
+      contacts: this.mockContacts,
+    }
+    this.hud = new DiegeticHUD(this.cockpit.hudMesh)
+    this.pips = new OffscreenPips(this.cockpit.offscreenPips)
+    this.updateMockState(0)
 
     window.addEventListener('resize', this.handleResize)
     this.resize()
@@ -89,6 +115,8 @@ export class GameApp {
     this.renderer.setAnimationLoop(null)
     window.removeEventListener('resize', this.handleResize)
     this.pipeline.dispose()
+    this.hud.dispose()
+    this.pips.dispose()
     this.scene.remove(this.cockpit.root)
     this.cockpit.dispose()
     this.scene.remove(this.starfield)
@@ -108,7 +136,31 @@ export class GameApp {
     const dt = this.clock.getDelta()
     this.starfield.rotation.y += dt * STARFIELD_SPIN_RAD_PER_SEC
     this.cockpit.update(dt)
+    this.updateMockState(dt)
+    this.hud.update(this.mockState, dt)
+    this.pips.update(this.mockContacts, this.camera, dt)
     this.pipeline.render(this.scene, this.camera)
+  }
+
+  /** Estado mínimo e determinístico; sem alocações no loop. */
+  private updateMockState(dt: number): void {
+    this.mockTime += dt
+    const t = this.mockTime
+    this.mockState.shield = 0.6 + 0.4 * Math.sin(t * 0.7)
+    this.mockState.energy = 0.5 + 0.5 * Math.sin(t * 1.1 + 1)
+    this.mockState.score = Math.floor(t * 10)
+    this.mockState.wave = 1 + Math.floor(t / MOCK_WAVE_SECONDS)
+
+    for (let i = 0; i < MOCK_CONTACT_COUNT; i++) {
+      const contact: Contact | undefined = this.mockContacts[i]
+      if (contact === undefined) continue
+      const phase = (i / MOCK_CONTACT_COUNT) * 2 * Math.PI
+      const radius = 35 + (i % 3) * 12
+      const angle = phase + t * (0.25 + (i % 4) * 0.08)
+      contact.position.x = Math.cos(angle) * radius
+      contact.position.y = Math.sin(angle * 0.6 + phase) * 8
+      contact.position.z = Math.sin(angle) * radius
+    }
   }
 
   private resize(): void {

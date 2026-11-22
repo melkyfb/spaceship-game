@@ -37,6 +37,8 @@ export class CockpitRig {
   readonly camera: THREE.PerspectiveCamera
   readonly hudMesh: THREE.Mesh
   readonly crosshairGroup: THREE.Group
+  /** Container dos pips radiais (ADR-02) — preenchido por OffscreenPips. */
+  readonly offscreenPips: THREE.Group
 
   private readonly hudTexture: THREE.CanvasTexture
   private readonly reticle: THREE.LineSegments
@@ -66,9 +68,9 @@ export class CockpitRig {
     this.crosshairGroup.add(this.reticle)
     this.crosshairGroup.add(this.createLeadIndicator())
 
-    const offscreenPips = new THREE.Group()
-    offscreenPips.name = 'OffscreenPips'
-    this.crosshairGroup.add(offscreenPips)
+    this.offscreenPips = new THREE.Group()
+    this.offscreenPips.name = 'OffscreenPips'
+    this.crosshairGroup.add(this.offscreenPips)
 
     const muzzleLeft = new THREE.Object3D()
     muzzleLeft.name = 'MuzzleLeft'
