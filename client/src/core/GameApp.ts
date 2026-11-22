@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { CockpitRig } from './CockpitRig'
 import { createStarfield } from './Starfield'
 
 const STAR_COUNT = 2000
@@ -12,6 +13,7 @@ export class GameApp {
   readonly renderer: THREE.WebGLRenderer
 
   private readonly container: HTMLElement
+  private readonly cockpit: CockpitRig
   private readonly starfield: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>
   private readonly clock = new THREE.Clock()
   private frameId: number | null = null
@@ -23,7 +25,10 @@ export class GameApp {
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(0x05070f)
 
-    this.camera = new THREE.PerspectiveCamera(75, 1, 0.05, 1500)
+    // A câmera é fornecida pelo rig: PilotHeadRig controla apenas a cabeça (ADR-01).
+    this.cockpit = new CockpitRig()
+    this.camera = this.cockpit.camera
+    this.scene.add(this.cockpit.root)
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
     const canvas = this.renderer.domElement
@@ -58,6 +63,8 @@ export class GameApp {
       this.frameId = null
     }
     window.removeEventListener('resize', this.handleResize)
+    this.scene.remove(this.cockpit.root)
+    this.cockpit.dispose()
     this.scene.remove(this.starfield)
     this.starfield.geometry.dispose()
     this.starfield.material.dispose()
@@ -74,6 +81,7 @@ export class GameApp {
     if (this.disposed) return
     const dt = this.clock.getDelta()
     this.starfield.rotation.y += dt * STARFIELD_SPIN_RAD_PER_SEC
+    this.cockpit.update(dt)
     this.renderer.render(this.scene, this.camera)
     this.frameId = requestAnimationFrame(this.tick)
   }
