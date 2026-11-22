@@ -53,3 +53,26 @@ export const WAVE_SPAWN_CONFIG = {
   MAX_R: 420,
   MIN_PLAYER_DIST: 120,
 } as const;
+
+export const ENEMY_ARCHETYPES = {
+  SCOUT: {
+    hp: 35,
+    speed: 52,
+    strafeRange: 120,
+    fireConeDeg: 15,
+    projectileSpeed: 180,
+  },
+  BRUISER: {
+    hp: 180,
+    speed: 24,
+    orbitRange: 140,
+    missileSpeed: 65,
+    missileHp: 10,
+  },
+  SCAVENGER: {
+    hp: 60,
+    speed: 48,
+    fleeRange: 55,
+    deathDropCount: 2,
+  },
+} as const;
