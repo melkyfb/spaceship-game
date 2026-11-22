@@ -87,12 +87,19 @@ function createXrSystem(options: { supported?: boolean; session?: XrSessionLike;
   }
 }
 
+interface FakeReferenceSpace {
+  getOffsetReferenceSpace: ReturnType<typeof vi.fn>
+}
+
 interface FakeXr {
   enabled: boolean
   isPresenting: boolean
   setReferenceSpaceType: ReturnType<typeof vi.fn>
   setSession: ReturnType<typeof vi.fn>
   getSession: ReturnType<typeof vi.fn>
+  getReferenceSpace: ReturnType<typeof vi.fn>
+  setReferenceSpace: ReturnType<typeof vi.fn>
+  getCamera: ReturnType<typeof vi.fn>
 }
 
 function createRenderer(fakeXr: FakeXr): THREE.WebGLRenderer {
@@ -125,13 +132,23 @@ function makePipeline(
   })
 }
 
-function freshFakeXr(): FakeXr {
+function createFakeReferenceSpace(): FakeReferenceSpace {
+  return {
+    getOffsetReferenceSpace: vi.fn((transform: unknown) => ({ kind: 'offset-space', transform })),
+  }
+}
+
+function freshFakeXr(referenceSpace: FakeReferenceSpace | null = null): FakeXr {
+  const xrCamera = new THREE.PerspectiveCamera()
   return {
     enabled: false,
     isPresenting: false,
     setReferenceSpaceType: vi.fn(),
     setSession: vi.fn(),
     getSession: vi.fn(() => null),
+    getReferenceSpace: vi.fn(() => referenceSpace),
+    setReferenceSpace: vi.fn(),
+    getCamera: vi.fn(() => xrCamera),
   }
 }
 
@@ -220,5 +237,90 @@ describe('RenderPipeline QUEST_3 / Enter VR flow', () => {
     // O botão continua habilitado: um segundo clique tenta novamente.
     button.click()
     await vi.waitFor(() => expect(xr.requestSessionSpy).toHaveBeenCalledTimes(2))
+  })
+
+  it('recenters WebXR reference space with yaw and x,y,z translation relative to pilot seat when presenting', async () => {
+    class FakeXRRigidTransform {
+      position: { x: number; y: number; z: number; w: number }
+      orientation: { x: number; y: number; z: number; w: number }
+      constructor(position?: { x?: number; y?: number; z?: number; w?: number }, orientation?: { x?: number; y?: number; z?: number; w?: number }) {
+        this.position = {
+          x: position?.x ?? 0,
+          y: position?.y ?? 0,
+          z: position?.z ?? 0,
+          w: position?.w ?? 1,
+        }
+        this.orientation = {
+          x: orientation?.x ?? 0,
+          y: orientation?.y ?? 0,
+          z: orientation?.z ?? 0,
+          w: orientation?.w ?? 1,
+        }
+      }
+    }
+    vi.stubGlobal('XRRigidTransform', FakeXRRigidTransform)
+
+    const { container } = installDom()
+    const referenceSpace = createFakeReferenceSpace()
+    const fakeXr = freshFakeXr(referenceSpace)
+    fakeXr.isPresenting = true
+    const pipeline = makePipeline(createXrSystem(), fakeXr, container)
+    await pipeline.setMode('QUEST_3')
+
+    const xrCamera = fakeXr.getCamera() as unknown as THREE.PerspectiveCamera
+    xrCamera.position.set(1.2, 0.3, -0.8)
+    xrCamera.quaternion.setFromEuler(new THREE.Euler(0.2, 0.7, -0.1, 'YXZ'))
+
+    // Move PilotHeadRig away from base to ensure recenter restores it.
+    const headRig = (pipeline as unknown as { pilotHeadRig: THREE.Object3D | null }).pilotHeadRig
+    expect(headRig).not.toBeNull()
+    headRig!.position.set(9, 9, 9)
+    headRig!.quaternion.setFromEuler(new THREE.Euler(0, 1, 0))
+
+    pipeline.recenter()
+
+    expect(headRig!.position.x).toBeCloseTo(0)
+    expect(headRig!.position.y).toBeCloseTo(0)
+    expect(headRig!.position.z).toBeCloseTo(0)
+    expect(headRig!.quaternion.x).toBeCloseTo(0)
+    expect(headRig!.quaternion.y).toBeCloseTo(0)
+    expect(headRig!.quaternion.z).toBeCloseTo(0)
+    expect(headRig!.quaternion.w).toBeCloseTo(1)
+
+    expect(referenceSpace.getOffsetReferenceSpace).toHaveBeenCalledTimes(1)
+    const transform = referenceSpace.getOffsetReferenceSpace.mock.calls[0]?.[0] as FakeXRRigidTransform
+    expect(transform.position.x).toBeCloseTo(1.2)
+    expect(transform.position.y).toBeCloseTo(0.3)
+    expect(transform.position.z).toBeCloseTo(-0.8)
+
+    const expectedYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.7)
+    expect(transform.orientation.x).toBeCloseTo(expectedYaw.x)
+    expect(transform.orientation.y).toBeCloseTo(expectedYaw.y)
+    expect(transform.orientation.z).toBeCloseTo(expectedYaw.z)
+    expect(transform.orientation.w).toBeCloseTo(expectedYaw.w)
+
+    expect(fakeXr.setReferenceSpace).toHaveBeenCalledWith({
+      kind: 'offset-space',
+      transform,
+    })
+  })
+
+  it('recenter does not touch WebXR reference space when not presenting', async () => {
+    const { container } = installDom()
+    const referenceSpace = createFakeReferenceSpace()
+    const fakeXr = freshFakeXr(referenceSpace)
+    fakeXr.isPresenting = false
+    const pipeline = makePipeline(createXrSystem(), fakeXr, container)
+    await pipeline.setMode('QUEST_3')
+
+    const headRig = (pipeline as unknown as { pilotHeadRig: THREE.Object3D | null }).pilotHeadRig
+    headRig!.position.set(1, 2, 3)
+    pipeline.recenter()
+
+    expect(headRig!.position.x).toBeCloseTo(0)
+    expect(headRig!.position.y).toBeCloseTo(0)
+    expect(headRig!.position.z).toBeCloseTo(0)
+    expect(referenceSpace.getOffsetReferenceSpace).not.toHaveBeenCalled()
+    expect(fakeXr.setReferenceSpace).not.toHaveBeenCalled()
   })
 })

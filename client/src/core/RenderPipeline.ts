@@ -286,14 +286,46 @@ export class RenderPipeline {
 
   /**
    * Recenter: devolve o PilotHeadRig à posição/yaw do assento do piloto (ADR-01).
-   * Placeholder documentado para o botão X do Quest: o mapeamento final em M3
-   * poderá combinar isto com `getOffsetReferenceSpace(new XRRigidTransform(...))`
-   * para neutralizar também o pose absoluto do reference space `local`.
+   * Em QUEST_3 apresentando WebXR, também compensa o reference space `local` via
+   * `getOffsetReferenceSpace(new XRRigidTransform(...))` para aplicar offset
+   * rotacional (yaw) e translacional (x, y, z) relativo ao assento do piloto.
    */
   recenter(): void {
-    if (this.pilotHeadRig === null) return
-    this.pilotHeadRig.position.copy(this.baseHeadPosition)
-    this.pilotHeadRig.quaternion.copy(this.baseHeadQuaternion)
+    if (this.pilotHeadRig !== null) {
+      this.pilotHeadRig.position.copy(this.baseHeadPosition)
+      this.pilotHeadRig.quaternion.copy(this.baseHeadQuaternion)
+    }
+    this.recenterXrReferenceSpace()
+  }
+
+  private recenterXrReferenceSpace(): void {
+    if (this.mode !== 'QUEST_3') return
+    if (!this.renderer.xr.isPresenting) return
+    const referenceSpace = this.renderer.xr.getReferenceSpace()
+    if (referenceSpace === null) return
+    if (typeof XRRigidTransform === 'undefined') return
+
+    const xrCamera = this.renderer.xr.getCamera()
+    const position = xrCamera.position
+    const orientation = xrCamera.quaternion
+
+    // Extrai apenas yaw para manter o recenter alinhado ao assento do piloto
+    // sem introduzir roll/pitch do headset no offset do reference space.
+    const euler = new THREE.Euler().setFromQuaternion(orientation, 'YXZ')
+    const yawOnly = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      euler.y,
+    )
+
+    // O offset descreve a origem do novo espaço no espaço atual: colocar a origem
+    // no pose atual do headset (yaw + x,y,z) faz o headset atual mapear para a
+    // origem local, que corresponde ao assento do piloto (PilotHeadRig base).
+    const offsetTransform = new XRRigidTransform(
+      { x: position.x, y: position.y, z: position.z, w: 1 },
+      { x: yawOnly.x, y: yawOnly.y, z: yawOnly.z, w: yawOnly.w },
+    )
+    const offsetReferenceSpace = referenceSpace.getOffsetReferenceSpace(offsetTransform)
+    this.renderer.xr.setReferenceSpace(offsetReferenceSpace)
   }
 
   dispose(): void {
