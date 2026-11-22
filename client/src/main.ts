@@ -1,5 +1,7 @@
 import './style.css'
 import { GameApp } from './core/GameApp'
+import type { RenderMode } from './core/RenderPipeline'
+import { RENDER_MODE_STORAGE_KEY } from './core/render-config'
 import { buildWsUrl } from './ws-status'
 
 const root = document.querySelector<HTMLDivElement>('#app')
@@ -8,8 +10,43 @@ if (!root) {
   throw new Error('Missing #app mount element')
 }
 
+function parseRenderMode(value: string | null): RenderMode | null {
+  return value === 'FLAT' || value === 'VR_BOX' || value === 'QUEST_3' ? value : null
+}
+
+/** Modo por query `?render=...`, com fallback em localStorage simples (US-06). */
+function selectRenderMode(): RenderMode {
+  const fromQuery = parseRenderMode(new URLSearchParams(window.location.search).get('render'))
+  if (fromQuery !== null) {
+    try {
+      window.localStorage.setItem(RENDER_MODE_STORAGE_KEY, fromQuery)
+    } catch {
+      // armazenamento opcional
+    }
+    return fromQuery
+  }
+  let stored: string | null = null
+  try {
+    stored = window.localStorage.getItem(RENDER_MODE_STORAGE_KEY)
+  } catch {
+    // armazenamento opcional
+  }
+  return parseRenderMode(stored) ?? 'FLAT'
+}
+
 const game = new GameApp(root)
-game.start()
+void game.setRenderMode(selectRenderMode()).then(() => {
+  game.start()
+})
+
+// Hooks de dev: IPD por [ ] e recenter por R. O mapeamento final (D-Pad/botão X
+// do Quest) pertence ao M3 — aqui só expomos os métodos já estruturados.
+window.addEventListener('keydown', (event: KeyboardEvent) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return
+  if (event.key === '[') game.adjustIpd(-1)
+  else if (event.key === ']') game.adjustIpd(1)
+  else if (event.key.toLowerCase() === 'r') game.recenter()
+})
 
 // M0 WebSocket diagnostic is kept as an unobtrusive overlay; it stays out of the render loop.
 const wsStatus = document.createElement('p')

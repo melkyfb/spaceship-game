@@ -1,10 +1,10 @@
 import * as THREE from 'three'
 import { CockpitRig } from './CockpitRig'
+import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield } from './Starfield'
 
 const STAR_COUNT = 2000
 const STARFIELD_SPIN_RAD_PER_SEC = 0.006
-const MAX_DPR = 2
 
 /** Bootstrap da cena Three.js: cena, câmera, renderer, loop e ciclo de vida. */
 export class GameApp {
@@ -15,8 +15,9 @@ export class GameApp {
   private readonly container: HTMLElement
   private readonly cockpit: CockpitRig
   private readonly starfield: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>
+  private readonly pipeline: RenderPipeline
   private readonly clock = new THREE.Clock()
-  private frameId: number | null = null
+  private running = false
   private disposed = false
 
   constructor(container: HTMLElement) {
@@ -31,6 +32,12 @@ export class GameApp {
     this.scene.add(this.cockpit.root)
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
+    this.pipeline = new RenderPipeline({
+      renderer: this.renderer,
+      camera: this.camera,
+      cockpitRoot: this.cockpit.root,
+      container: this.container,
+    })
     const canvas = this.renderer.domElement
     canvas.style.position = 'fixed'
     canvas.style.inset = '0'
@@ -50,19 +57,38 @@ export class GameApp {
   }
 
   start(): void {
-    if (this.disposed || this.frameId !== null) return
+    if (this.disposed || this.running) return
+    this.running = true
     this.clock.start()
-    this.frameId = requestAnimationFrame(this.tick)
+    // setAnimationLoop usa rAF no desktop e o requestAnimationFrame da sessão em WebXR.
+    this.renderer.setAnimationLoop(this.tick)
+  }
+
+  /** Seleção de modo (FLAT / VR_BOX / QUEST_3) — ver main.ts para a fonte da config. */
+  async setRenderMode(mode: RenderMode): Promise<void> {
+    await this.pipeline.setMode(mode)
+  }
+
+  getRenderMode(): RenderMode {
+    return this.pipeline.getMode()
+  }
+
+  /** Ajuste dev de IPD via teclas; D-Pad/gamepad Quest fica para M3. */
+  adjustIpd(deltaMm: number): void {
+    this.pipeline.adjustIpd(deltaMm)
+  }
+
+  recenter(): void {
+    this.pipeline.recenter()
   }
 
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    if (this.frameId !== null) {
-      cancelAnimationFrame(this.frameId)
-      this.frameId = null
-    }
+    this.running = false
+    this.renderer.setAnimationLoop(null)
     window.removeEventListener('resize', this.handleResize)
+    this.pipeline.dispose()
     this.scene.remove(this.cockpit.root)
     this.cockpit.dispose()
     this.scene.remove(this.starfield)
@@ -82,16 +108,10 @@ export class GameApp {
     const dt = this.clock.getDelta()
     this.starfield.rotation.y += dt * STARFIELD_SPIN_RAD_PER_SEC
     this.cockpit.update(dt)
-    this.renderer.render(this.scene, this.camera)
-    this.frameId = requestAnimationFrame(this.tick)
+    this.pipeline.render(this.scene, this.camera)
   }
 
   private resize(): void {
-    const width = window.innerWidth
-    const height = window.innerHeight
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_DPR))
-    this.renderer.setSize(width, height, false)
-    this.camera.aspect = width / height
-    this.camera.updateProjectionMatrix()
+    this.pipeline.resize(window.innerWidth, window.innerHeight)
   }
 }
