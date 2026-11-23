@@ -37,10 +37,12 @@ function selectRenderMode(): RenderMode {
 const game = new GameApp(root)
 
 const resumeAudioOnGesture = (): void => {
+  window.removeEventListener('pointerdown', resumeAudioOnGesture)
+  window.removeEventListener('keydown', resumeAudioOnGesture)
   void game.resumeAudioFromGesture()
 }
-window.addEventListener('pointerdown', resumeAudioOnGesture, { once: true })
-window.addEventListener('keydown', resumeAudioOnGesture, { once: true })
+window.addEventListener('pointerdown', resumeAudioOnGesture)
+window.addEventListener('keydown', resumeAudioOnGesture)
 
 void game.setRenderMode(selectRenderMode()).then(() => {
   game.start()

@@ -163,4 +163,30 @@ describe('SoundSynth', () => {
     expect(ctx.close).toHaveBeenCalledTimes(1)
     expect(() => synth.playEvent({ kind: 'EXPLOSION', pos: [0, 0, 0], scale: 1 })).not.toThrow()
   })
+
+  it('applies listener pose and spatializes event panner position', async () => {
+    const synth = new SoundSynth()
+    await synth.resumeFromGesture()
+    const ctx = MockAudioContext.instances[0]!
+
+    synth.updateListener([10, 20, 30], [0, 0, -1], [0, 1, 0])
+    expect(ctx.listener.positionX.value).toBe(10)
+    expect(ctx.listener.positionY.value).toBe(20)
+    expect(ctx.listener.positionZ.value).toBe(30)
+    expect(ctx.listener.forwardZ.value).toBe(-1)
+    expect(ctx.listener.upY.value).toBe(1)
+
+    synth.playEvent({ kind: 'HIT', pos: [7, 8, 9], scale: 1 })
+    expect(ctx.createPanner).toHaveBeenCalled()
+    const panner = ctx.createPanner.mock.results[0]!.value as {
+      positionX: { value: number }
+      positionY: { value: number }
+      positionZ: { value: number }
+    }
+    expect(panner.positionX.value).toBe(7)
+    expect(panner.positionY.value).toBe(8)
+    expect(panner.positionZ.value).toBe(9)
+
+    synth.dispose()
+  })
 })

@@ -6,15 +6,8 @@ export interface SoundEvent {
   scale: number
 }
 
-interface ListenerPose {
-  position: readonly [number, number, number]
-  forward: readonly [number, number, number]
-  up: readonly [number, number, number]
-}
-
 const DEFAULT_FORWARD: readonly [number, number, number] = [0, 0, -1]
 const DEFAULT_UP: readonly [number, number, number] = [0, 1, 0]
-const DEFAULT_POS: readonly [number, number, number] = [0, 0, 0]
 
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value
@@ -29,11 +22,9 @@ export class SoundSynth {
   private ctx: AudioContext | null = null
   private noiseBuffer: AudioBuffer | null = null
   private disposed = false
-  private listener: ListenerPose = {
-    position: DEFAULT_POS,
-    forward: DEFAULT_FORWARD,
-    up: DEFAULT_UP,
-  }
+  private readonly listenerPos: [number, number, number] = [0, 0, 0]
+  private readonly listenerForward: [number, number, number] = [0, 0, -1]
+  private readonly listenerUp: [number, number, number] = [0, 1, 0]
 
   async resumeFromGesture(): Promise<void> {
     if (this.disposed) return
@@ -56,7 +47,15 @@ export class SoundSynth {
     forward: readonly [number, number, number] = DEFAULT_FORWARD,
     up: readonly [number, number, number] = DEFAULT_UP,
   ): void {
-    this.listener = { position, forward, up }
+    this.listenerPos[0] = position[0]
+    this.listenerPos[1] = position[1]
+    this.listenerPos[2] = position[2]
+    this.listenerForward[0] = forward[0]
+    this.listenerForward[1] = forward[1]
+    this.listenerForward[2] = forward[2]
+    this.listenerUp[0] = up[0]
+    this.listenerUp[1] = up[1]
+    this.listenerUp[2] = up[2]
     const ctx = this.ctx
     if (!ctx || this.disposed) return
     try {
@@ -102,7 +101,7 @@ export class SoundSynth {
     this.noiseBuffer = null
     if (ctx) {
       try {
-        void ctx.close()
+        void ctx.close().catch(() => {})
       } catch {
         // ignore
       }
@@ -111,9 +110,9 @@ export class SoundSynth {
 
   private applyListener(ctx: AudioContext): void {
     const l = ctx.listener
-    const pos = this.listener.position
-    const fwd = this.listener.forward
-    const up = this.listener.up
+    const pos = this.listenerPos
+    const fwd = this.listenerForward
+    const up = this.listenerUp
 
     this.setParam(l.positionX, pos[0])
     this.setParam(l.positionY, pos[1])
@@ -155,7 +154,7 @@ export class SoundSynth {
     if (this.noiseBuffer && this.noiseBuffer.sampleRate === ctx.sampleRate) {
       return this.noiseBuffer
     }
-    const length = Math.max(1, Math.floor(ctx.sampleRate * 0.5))
+    const length = Math.max(1, Math.floor(ctx.sampleRate))
     const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
     const data = buffer.getChannelData(0)
     for (let i = 0; i < data.length; i++) {
@@ -181,6 +180,7 @@ export class SoundSynth {
     // Noise burst
     const noise = ctx.createBufferSource()
     noise.buffer = this.getNoiseBuffer(ctx)
+    noise.loop = true
     const noiseGain = ctx.createGain()
     noiseGain.gain.setValueAtTime(peak, now)
     noiseGain.gain.exponentialRampToValueAtTime(0.001, now + duration)
@@ -209,6 +209,7 @@ export class SoundSynth {
 
     const noise = ctx.createBufferSource()
     noise.buffer = this.getNoiseBuffer(ctx)
+    noise.loop = true
     const noiseGain = ctx.createGain()
     noiseGain.gain.setValueAtTime(peak, now)
     noiseGain.gain.exponentialRampToValueAtTime(0.001, now + duration)
