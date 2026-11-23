@@ -187,4 +187,60 @@ describe('WsTransport', () => {
     expect(() => transport.send({ t: 'PING', clientTime: 1 })).not.toThrow()
     expect(ws.sent).toHaveLength(0)
   })
+
+  it('ignores msgpack payloads with unknown server message type', async () => {
+    const transport = new WsTransport('ws://localhost:8080')
+    const p = transport.connect()
+    const ws = MockWebSocket.instances[0]!
+    ws.open()
+    await p
+
+    const received: ServerMessage[] = []
+    transport.onMessage((msg) => received.push(msg))
+
+    ws.emitMessage(encode({ t: 'BOGUS', foo: 1 }))
+    ws.emitMessage(encode({ t: 123 }))
+    ws.emitMessage(encode({ nope: true }))
+    ws.emitMessage(encode({ t: 'PONG', clientTime: 1, serverTime: 2 }))
+
+    expect(received).toEqual([{ t: 'PONG', clientTime: 1, serverTime: 2 }])
+  })
+
+  it('marks transport terminal on post-open close and notifies onClose', async () => {
+    const onClose = vi.fn()
+    const onError = vi.fn()
+    const transport = new WsTransport('ws://localhost:8080', { onClose, onError })
+    const p = transport.connect()
+    const ws = MockWebSocket.instances[0]!
+    ws.open()
+    await p
+
+    const received: ServerMessage[] = []
+    transport.onMessage((msg) => received.push(msg))
+
+    // Server-initiated close after open
+    ws.close()
+
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+    expect(() => transport.send({ t: 'PING', clientTime: 1 })).not.toThrow()
+    expect(ws.sent).toHaveLength(0)
+    await expect(transport.connect()).rejects.toThrow('Transport is closed')
+
+    // No further delivery after terminal close
+    ws.emitMessage(encode({ t: 'PONG', clientTime: 1, serverTime: 2 }))
+    expect(received).toHaveLength(0)
+  })
+
+  it('does not call onClose for explicit close()', async () => {
+    const onClose = vi.fn()
+    const transport = new WsTransport('ws://localhost:8080', { onClose })
+    const p = transport.connect()
+    const ws = MockWebSocket.instances[0]!
+    ws.open()
+    await p
+
+    transport.close()
+    expect(onClose).not.toHaveBeenCalled()
+  })
 })
