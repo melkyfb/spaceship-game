@@ -1,0 +1,30 @@
+[
+  {
+    "id": "player_ship",
+    "source": "assets/spaceship-player/SpaceShip.fbx",
+    "output": "client/public/assets/models/ships/player_ship.glb",
+    "targetRadius": 2.2,
+    "forward": "-Z"
+  },
+  {
+    "id": "missile",
+    "source": "assets/missile/cgtrader_optimized_Roket2.fbx",
+    "output": "client/public/assets/models/projectiles/missile.glb",
+    "targetRadius": 0.6,
+    "forward": "-Z"
+  },
+  {
+    "id": "crystal_shield",
+    "source": "assets/crystal/Crystals_Set/Files/Crystals_Set_FBX.fbx",
+    "output": "client/public/assets/models/pickups/crystal_shield.glb",
+    "targetRadius": 2.0,
+    "nodeFilter": "Shield"
+  },
+  {
+    "id": "crystal_energy",
+    "source": "assets/crystal/Crystals_Set/Files/Crystals_Set_FBX.fbx",
+    "output": "client/public/assets/models/pickups/crystal_energy.glb",
+    "targetRadius": 2.0,
+    "nodeFilter": "Energy"
+  }
+]
