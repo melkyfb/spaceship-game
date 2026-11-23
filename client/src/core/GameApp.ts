@@ -455,13 +455,31 @@ export class GameApp {
     try {
       const def = ASSET_MANIFEST.playerShip
       const ship = await this.assetLoader.load(def.url)
-      if (!ship) return
+      if (!ship || this.disposed) {
+        if (ship) this.disposeLoadedObject(ship)
+        return
+      }
       normalizeObjectToRadius(ship, SHIP_CONFIG.RADIUS)
       if (def.yawOffsetRad) ship.rotation.y += def.yawOffsetRad
+      if (this.disposed) {
+        this.disposeLoadedObject(ship)
+        return
+      }
       this.shipPool.setShipTemplate(ship)
     } catch (err) {
       console.warn('[GameApp] ship template preload failed, using fallback', err)
     }
+  }
+
+  private disposeLoadedObject(obj: THREE.Object3D): void {
+    obj.traverse((node) => {
+      const mesh = node as THREE.Mesh
+      if (!mesh.isMesh) return
+      mesh.geometry?.dispose()
+      const mat = mesh.material
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
+      else mat?.dispose()
+    })
   }
 
   private resetSessionState(): void {
