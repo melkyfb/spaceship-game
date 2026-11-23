@@ -10,6 +10,13 @@ import {
 
 export const MAX_CLIENT_MESSAGE_BYTES = 512;
 export const MAX_INPUT_BATCH_CMDS = 16;
+/**
+ * Max tick span allowed within one INPUT_BATCH. Redundant batches may resend
+ * recent commands, but an oversized tick range is rejected at decode time to
+ * provide a deterministic flood bound. Task 4 may additionally enforce
+ * server-relative recency windows.
+ */
+export const MAX_INPUT_BATCH_TICK_SPAN = 32;
 
 export type DecodeResult<T> =
   | { ok: true; value: T }
@@ -104,10 +111,17 @@ function validateInputBatch(msg: Record<string, unknown>): DecodeResult<ClientMe
   if (cmds.length > MAX_INPUT_BATCH_CMDS) return err('INPUT_BATCH.cmds exceeds maximum');
 
   const validated: ShipCommand[] = [];
+  let minTick = Number.POSITIVE_INFINITY;
+  let maxTick = Number.NEGATIVE_INFINITY;
   for (const cmd of cmds) {
     const result = validateShipCommand(cmd);
     if (!result.ok) return result;
     validated.push(result.value);
+    if (result.value.tick < minTick) minTick = result.value.tick;
+    if (result.value.tick > maxTick) maxTick = result.value.tick;
+  }
+  if (validated.length > 0 && maxTick - minTick > MAX_INPUT_BATCH_TICK_SPAN) {
+    return err('INPUT_BATCH tick span exceeds maximum');
   }
   return { ok: true, value: { t: 'INPUT_BATCH', cmds: validated } };
 }
@@ -136,6 +150,10 @@ function validateClientMessage(decoded: unknown): DecodeResult<ClientMessage> {
       return { ok: true, value: { t: 'RESPAWN_REQUEST' } };
     case 'QUIT':
       return { ok: true, value: { t: 'QUIT' } };
+    default: {
+      const _exhaustive: never = t as never;
+      return err(`unknown message type: ${String(_exhaustive)}`);
+    }
   }
 }
 

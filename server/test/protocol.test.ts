@@ -6,6 +6,7 @@ import {
   encodeServerMessage,
   MAX_CLIENT_MESSAGE_BYTES,
   MAX_INPUT_BATCH_CMDS,
+  MAX_INPUT_BATCH_TICK_SPAN,
   type DecodeResult,
 } from '../src/protocol';
 import type { ClientMessage, ServerMessage, ShipCommand } from '../../shared/src/types';
@@ -135,6 +136,18 @@ test('decodeClientMessage rejects invalid shape and types', () => {
 test('decodeClientMessage bounds INPUT_BATCH command count', () => {
   const cmds = Array.from({ length: MAX_INPUT_BATCH_CMDS + 1 }, (_, i) => validCmd({ tick: i }));
   expectErr(decodeClientMessage(encode({ t: 'INPUT_BATCH', cmds })));
+});
+
+test('decodeClientMessage bounds INPUT_BATCH tick window', () => {
+  const within = Array.from({ length: 4 }, (_, i) => validCmd({ tick: 100 + i * 10 }));
+  const ok = expectOk(decodeClientMessage(encode({ t: 'INPUT_BATCH', cmds: within })));
+  assert.equal(ok.t, 'INPUT_BATCH');
+
+  const redundant = [validCmd({ tick: 10 }), validCmd({ tick: 11 }), validCmd({ tick: 10 }), validCmd({ tick: 11 })];
+  expectOk(decodeClientMessage(encode({ t: 'INPUT_BATCH', cmds: redundant })));
+
+  const tooWide = [validCmd({ tick: 1 }), validCmd({ tick: 1 + MAX_INPUT_BATCH_TICK_SPAN + 1 })];
+  expectErr(decodeClientMessage(encode({ t: 'INPUT_BATCH', cmds: tooWide })));
 });
 
 test('encodeServerMessage round-trips through msgpack decode', () => {
