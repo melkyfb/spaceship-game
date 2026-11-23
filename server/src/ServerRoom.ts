@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { WORLD_CONFIG } from '../../shared/src/constants';
 import { GameRoom } from '../../shared/src/sim/GameRoom';
-import type { ClientMessage, ServerMessage } from '../../shared/src/types';
+import type { ClientMessage, LeaderboardEntry, ServerMessage } from '../../shared/src/types';
+import type { LeaderboardStore } from './LeaderboardStore';
 import { decodeClientMessage, encodeServerMessage } from './protocol';
 
 export interface ScoreRecord {
@@ -37,6 +38,7 @@ export interface ServerRoomOptions {
   seed?: number;
   scoreRecorder?: ScoreRecorder;
   createPlayerToken?: PlayerTokenProvider;
+  leaderboardStore?: Pick<LeaderboardStore, 'getTop' | 'getBestForToken' | 'getRankForScore' | 'flush'>;
   now?: () => number;
 }
 
@@ -47,6 +49,7 @@ export class ServerRoom {
   readonly gameRoom: GameRoom;
   private readonly scoreRecorder: ScoreRecorder | undefined;
   private readonly createPlayerToken: PlayerTokenProvider;
+  private readonly leaderboardStore: Pick<LeaderboardStore, 'getTop' | 'getBestForToken' | 'getRankForScore' | 'flush'> | undefined;
   private readonly now: () => number;
   private readonly clientsBySocket = new Map<SocketLike, ClientState>();
   private readonly socketByPlayerId = new Map<string, SocketLike>();
@@ -56,6 +59,7 @@ export class ServerRoom {
     this.roomId = opts.roomId ?? 'default';
     this.scoreRecorder = opts.scoreRecorder;
     this.createPlayerToken = opts.createPlayerToken ?? (() => randomUUID());
+    this.leaderboardStore = opts.leaderboardStore;
     this.now = opts.now ?? (() => Date.now());
     this.gameRoom = new GameRoom({
       seed: opts.seed ?? 1,
@@ -215,6 +219,7 @@ export class ServerRoom {
 
     // Send immediate snapshot so the client can render without waiting for next broadcast.
     this.send(client.socket, this.gameRoom.snapshot() as ServerMessage);
+    this.sendLeaderboardToClient(client);
   }
 
   private reject(socket: SocketLike, code: string, message: string): void {
@@ -278,6 +283,47 @@ export class ServerRoom {
       roomId: this.roomId,
       mode: 'MULTIPLAYER',
     });
+    void this.flushAndBroadcastLeaderboard();
+  }
+
+  private sendLeaderboardToClient(client: ClientState): void {
+    if (!this.leaderboardStore) return;
+    const msg = this.buildLeaderboardMessage(client.playerToken, client.name);
+    this.send(client.socket, msg);
+  }
+
+  private async flushAndBroadcastLeaderboard(): Promise<void> {
+    if (!this.leaderboardStore) return;
+    try {
+      await this.leaderboardStore.flush();
+    } catch {
+      // Best-effort: still attempt to send from committed DB state.
+    }
+    for (const client of this.clientsBySocket.values()) {
+      if (!client.joined) continue;
+      if (client.socket.readyState !== OPEN_READY_STATE) continue;
+      const msg = this.buildLeaderboardMessage(client.playerToken, client.name);
+      this.send(client.socket, msg);
+    }
+  }
+
+  private buildLeaderboardMessage(playerToken: string, playerName: string): ServerMessage {
+    const store = this.leaderboardStore;
+    if (!store) {
+      return { t: 'LEADERBOARD', scope: 'GLOBAL', entries: [] };
+    }
+    const top = store.getTop('MULTIPLAYER', 10);
+    const entries: LeaderboardEntry[] = [];
+    for (let i = 0; i < top.length; i++) {
+      const row = top[i];
+      if (!row) continue;
+      entries.push({ rank: i + 1, name: row.name, score: row.score });
+    }
+    const best = store.getBestForToken('MULTIPLAYER', playerToken);
+    const current = best
+      ? { rank: store.getRankForScore('MULTIPLAYER', best.score), name: best.name || playerName, score: best.score }
+      : undefined;
+    return { t: 'LEADERBOARD', scope: 'GLOBAL', entries, ...(current ? { current } : {}) };
   }
 
   private broadcast(msg: ServerMessage): void {

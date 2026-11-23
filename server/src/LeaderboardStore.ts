@@ -159,6 +159,15 @@ export class LeaderboardStore {
     return row ?? null;
   }
 
+  getRankForScore(mode: LeaderboardMode, score: number): number {
+    const normalizedMode = normalizeMode(mode);
+    const s = normalizeScore(score);
+    const row = this.db.prepare(
+      `SELECT COUNT(*) + 1 AS rank FROM scores WHERE mode = ? AND score > ?`,
+    ).get(normalizedMode, s) as { rank: number } | undefined;
+    return row?.rank ?? 1;
+  }
+
   async flush(): Promise<void> {
     if (this.queue.length === 0 && !this.draining) return;
     // If a drain is scheduled or in progress, wait for it; also drain any

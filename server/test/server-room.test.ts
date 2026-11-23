@@ -288,3 +288,100 @@ test('JOIN with known playerToken re-associates; unknown token gets a new opaque
   assert.notEqual(welcomeB.playerToken, 'unknown-token');
   assert.ok((welcomeB.playerToken ?? '').length > 0);
 });
+
+test('WELCOME is followed by a GLOBAL LEADERBOARD for the joining player', async () => {
+  const store = {
+    rows: [] as Array<{ token: string; name: string; score: number; wave: number; mode: string; createdAt: string }>,
+    recordScore() {},
+    getTop(_mode: string, limit: number) {
+      return this.rows.slice(0, limit);
+    },
+    getBestForToken(_mode: string, token: string) {
+      return this.rows.find((r) => r.token === token) ?? null;
+    },
+    getRankForScore(_mode: string, score: number) {
+      return this.rows.filter((r) => r.score > score).length + 1;
+    },
+    async flush() {},
+  };
+  store.rows.push({ token: 't1', name: 'Alice', score: 500, wave: 3, mode: 'MULTIPLAYER', createdAt: '2026-01-01T00:00:00.000Z' });
+  store.rows.push({ token: 't2', name: 'Bob', score: 200, wave: 2, mode: 'MULTIPLAYER', createdAt: '2026-01-01T00:00:00.000Z' });
+
+  const room = new ServerRoom({
+    roomId: 'default',
+    seed: 1,
+    createPlayerToken: () => 't2',
+    leaderboardStore: store as never,
+  });
+  const a = new MockSocket();
+  room.handleOpen(a as never);
+  sendMsg(a, room, { t: 'JOIN', roomId: 'default', name: 'Bob', platform: 'PC' } as ClientMessage);
+
+  const messages = a.messages();
+  const welcomeIdx = messages.findIndex((m) => m.t === 'WELCOME');
+  const leaderboardIdx = messages.findIndex((m) => m.t === 'LEADERBOARD');
+  assert.ok(welcomeIdx >= 0, 'expected WELCOME');
+  assert.ok(leaderboardIdx > welcomeIdx, 'expected LEADERBOARD after WELCOME');
+  const lb = messages[leaderboardIdx] as any;
+  assert.equal(lb.scope, 'GLOBAL');
+  assert.ok(Array.isArray(lb.entries));
+  assert.equal(lb.entries[0].rank, 1);
+  assert.equal(lb.entries[0].name, 'Alice');
+  assert.equal(lb.entries[0].score, 500);
+  assert.deepEqual(lb.current, { rank: 2, name: 'Bob', score: 200 });
+});
+
+test('SCORE_RECORDED triggers GLOBAL LEADERBOARD update after flush', async () => {
+  const store = {
+    rows: [] as Array<{ token: string; name: string; score: number; wave: number; mode: string; createdAt: string }>,
+    recordScore(input: any) {
+      this.rows.push({
+        token: input.playerToken ?? input.token,
+        name: input.name,
+        score: input.score,
+        wave: input.wave,
+        mode: input.mode,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+      this.rows.sort((a, b) => b.score - a.score);
+    },
+    getTop(_mode: string, limit: number) { return this.rows.slice(0, limit); },
+    getBestForToken(_mode: string, token: string) { return this.rows.find((r) => r.token === token) ?? null; },
+    getRankForScore(_mode: string, score: number) { return this.rows.filter((r) => r.score > score).length + 1; },
+    async flush() {},
+  };
+
+  const room = new ServerRoom({
+    roomId: 'default',
+    seed: 1,
+    createPlayerToken: () => 'pt-1',
+    scoreRecorder: (r) => store.recordScore(r),
+    leaderboardStore: store as never,
+  });
+  const a = new MockSocket();
+  room.handleOpen(a as never);
+  sendMsg(a, room, { t: 'JOIN', roomId: 'default', name: 'Pilot', platform: 'PC' } as ClientMessage);
+  const baseline = a.messages().length;
+
+  const gr = (room as any).gameRoom;
+  (gr as any).pendingEvents.push({
+    t: 'EVENT',
+    kind: 'SCORE_RECORDED',
+    pos: [0, 0, 0],
+    scale: 1,
+    playerId: [...((room as any).socketByPlayerId as Map<string, unknown>).keys()][0],
+    name: 'Pilot',
+    score: 777,
+    wave: 4,
+  });
+  room.tick();
+  await new Promise<void>((r) => setImmediate(r));
+  await new Promise<void>((r) => setImmediate(r));
+
+  const messages = a.messages().slice(baseline);
+  const lb = [...messages].reverse().find((m) => m.t === 'LEADERBOARD') as any;
+  assert.ok(lb, 'expected LEADERBOARD after SCORE_RECORDED');
+  assert.equal(lb.scope, 'GLOBAL');
+  assert.equal(lb.entries[0].score, 777);
+  assert.deepEqual(lb.current, { rank: 1, name: 'Pilot', score: 777 });
+});

@@ -24,6 +24,7 @@ export class RoomManager {
       createPlayerToken: this.leaderboardStore
         ? (existing) => this.leaderboardStore!.getOrCreateToken(existing)
         : undefined,
+      leaderboardStore: this.leaderboardStore,
       now: opts.now,
     });
     this.rooms.set(this.defaultRoom.roomId, this.defaultRoom);
