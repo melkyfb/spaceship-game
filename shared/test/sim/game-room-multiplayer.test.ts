@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ASTEROID_TIERS, WORLD_CONFIG } from '../../src/constants'
+import { ASTEROID_TIERS, SHIP_CONFIG, WORLD_CONFIG } from '../../src/constants'
 import { GameRoom } from '../../src/sim/GameRoom'
 import type { ServerMessage, ShipCommand } from '../../src/types'
 
@@ -231,6 +231,65 @@ describe('GameRoom multiplayer (Task 2)', () => {
     expect(rec).toBeDefined()
     expect(rec.score).toBe(score)
     expect(room.hasPlayer('p1')).toBe(false)
+  })
+
+  it('respawns at a safe position away from immediate hazards', () => {
+    const room = new GameRoom({
+      seed: 9,
+      playerId: 'p1',
+      playerName: 'Pilot',
+      platform: 'PC',
+      spawnInitialWave: false,
+      initialWave: 0,
+      gameOverOnDeath: false,
+      autoRespawn: false,
+      initialAsteroids: [
+        // Big asteroid covering origin where legacy respawn used to place ships.
+        { id: 500, pos: [0, 0, 0], vel: [0, 0, 0], rot: [0, 0, 0, 1], angVel: [0, 0, 0], size: 'LARGE', hp: 10000 },
+      ],
+    })
+
+    // wait out spawn invuln then force death by ramming
+    for (let i = 1; i <= 100; i++) {
+      room.receiveForPlayer('p1', [makeCmd(i, {})])
+      room.stepFixed()
+      room.drainEvents()
+    }
+    let died = false
+    for (let i = 101; i <= 140; i++) {
+      ;(room as any).projectiles.push({
+        id: 8000 + i,
+        ownerId: 'enemy:99',
+        kind: 'ENEMY_PLASMA',
+        pos: [0, 0, -3],
+        prevPos: [0, 0, -3],
+        vel: [0, 0, 60],
+        ttl: 5,
+      })
+      room.receiveForPlayer('p1', [makeCmd(i, {})])
+      room.stepFixed()
+      room.drainEvents()
+      const s = room.snapshot()
+      if (isSnapshot(s) && s.ships.find((sh) => sh.id === 'p1')?.alive === false) { died = true; break }
+    }
+    expect(died).toBe(true)
+
+    for (let i = 301; i <= 301 + 30 * 4; i++) {
+      room.receiveForPlayer('p1', [makeCmd(i, {})])
+      room.stepFixed()
+      room.drainEvents()
+    }
+    room.requestRespawn('p1')
+    room.stepFixed()
+    const snap = room.snapshot()
+    if (!isSnapshot(snap)) throw new Error('snapshot')
+    const ship = snap.ships.find((s) => s.id === 'p1')!
+    expect(ship.alive).toBe(true)
+    expect(ship.invulnTimer).toBeGreaterThan(0)
+    const asteroid = snap.asteroids.find((a) => a.id === 500)!
+    const ar = ASTEROID_TIERS.LARGE.radius
+    const dist = Math.hypot(ship.pos[0] - asteroid.pos[0], ship.pos[1] - asteroid.pos[1], ship.pos[2] - asteroid.pos[2])
+    expect(dist).toBeGreaterThanOrEqual(ar + SHIP_CONFIG.RADIUS)
   })
 
   it('killer attribution for enemy and asteroid deaths', () => {

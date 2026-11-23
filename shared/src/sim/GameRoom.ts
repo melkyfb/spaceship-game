@@ -1286,12 +1286,87 @@ export class GameRoom {
     }
   }
 
+  private pickSafeRespawnPos(shipId: string): [number, number, number] {
+    const shipR = SHIP_CONFIG.RADIUS
+    // Deterministic candidate search: origin first, then random samples.
+    // Respawn is rare (not a hot loop), so small temporary arrays are acceptable.
+    let bestX = 0
+    let bestY = 0
+    let bestZ = 0
+    let bestScore = -Infinity
+    const attempts = 24
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      let x = 0
+      let y = 0
+      let z = 0
+      if (attempt > 0) {
+        // Uniform direction + radius in [0, 120]
+        const u = this.rng() * 2 - 1
+        const phi = this.rng() * Math.PI * 2
+        const sinTheta = Math.sqrt(Math.max(0, 1 - u * u))
+        const r = Math.cbrt(this.rng()) * 120
+        x = r * sinTheta * Math.cos(phi)
+        y = r * u
+        z = r * sinTheta * Math.sin(phi)
+      }
+
+      let minClear = Infinity
+
+      for (let i = 0; i < this.asteroids.length; i++) {
+        const a = this.asteroids[i]
+        if (a === undefined) continue
+        const ar = ASTEROID_TIERS[a.size].radius
+        const d = Math.hypot(x - a.pos[0], y - a.pos[1], z - a.pos[2]) - ar - shipR
+        if (d < minClear) minClear = d
+      }
+
+      for (let i = 0; i < this.enemies.length; i++) {
+        const e = this.enemies[i]
+        if (e === undefined) continue
+        const er = this.enemyRadius(e.archetype)
+        const d = Math.hypot(x - e.pos[0], y - e.pos[1], z - e.pos[2]) - er - shipR
+        if (d < minClear) minClear = d
+      }
+
+      for (let i = 0; i < this.projectiles.length; i++) {
+        const p = this.projectiles[i]
+        if (p === undefined) continue
+        // Enemy projectiles are the main immediate danger; give them extra margin.
+        const margin = p.ownerId.startsWith('enemy:') ? 12 : 6
+        const d = Math.hypot(x - p.pos[0], y - p.pos[1], z - p.pos[2]) - PROJECTILE_RADIUS - shipR - margin
+        if (d < minClear) minClear = d
+      }
+
+      for (let i = 0; i < this.ships.length; i++) {
+        const s = this.ships[i]
+        if (s === undefined || s.id === shipId || !s.alive) continue
+        const d = Math.hypot(x - s.pos[0], y - s.pos[1], z - s.pos[2]) - shipR - SHIP_CONFIG.RADIUS
+        if (d < minClear) minClear = d
+      }
+
+      // Prefer candidates with clearance >= 8u; track best fallback.
+      const score = minClear
+      if (score > bestScore) {
+        bestScore = score
+        bestX = x
+        bestY = y
+        bestZ = z
+      }
+      if (minClear >= 8) {
+        return [x, y, z]
+      }
+    }
+
+    return [bestX, bestY, bestZ]
+  }
+
   private respawnShip(ship: ShipState, rt: ShipRuntime): void {
     ship.alive = true
     ship.shield = SHIP_CONFIG.MAX_SHIELD
     ship.energy = SHIP_CONFIG.MAX_ENERGY
     ship.score = 0
-    ship.pos[0] = 0; ship.pos[1] = 0; ship.pos[2] = 0
+    const pos = this.pickSafeRespawnPos(ship.id)
+    ship.pos[0] = pos[0]; ship.pos[1] = pos[1]; ship.pos[2] = pos[2]
     ship.vel[0] = 0; ship.vel[1] = 0; ship.vel[2] = 0
     ship.rot[0] = 0; ship.rot[1] = 0; ship.rot[2] = 0; ship.rot[3] = 1
     ship.angVel[0] = 0; ship.angVel[1] = 0; ship.angVel[2] = 0
