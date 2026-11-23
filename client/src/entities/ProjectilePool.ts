@@ -3,6 +3,14 @@ import type { ProjectileState } from '@asteroids/shared'
 
 export const PROJECTILE_CAPACITY = 256
 export const MISSILE_VISUAL_CAPACITY = 32
+/**
+ * Missile GLB template contract:
+ * - Authored forward: -Z, up: +Y, origin at gameplay center.
+ * - Template is centered and normalized to unit bounding-sphere radius on ingestion.
+ * - Slot group is scaled uniformly by MISSILE_TEMPLATE_SCALE so authored size does not leak.
+ * - Runtime orientation points local -Z along projectile velocity (gameplay forward: -Z).
+ */
+export const MISSILE_TEMPLATE_SCALE = 1.4
 
 const UP = new THREE.Vector3(0, 1, 0)
 
@@ -26,6 +34,23 @@ function cloneTemplateObject(template: THREE.Object3D): THREE.Object3D {
     else if (mesh.material) mesh.material = mesh.material.clone()
   })
   return clone
+}
+
+function normalizeMissileTemplate(obj: THREE.Object3D): void {
+  const box = new THREE.Box3().setFromObject(obj)
+  const center = new THREE.Vector3()
+  box.getCenter(center)
+  obj.position.sub(center)
+
+  box.setFromObject(obj)
+  const sphere = new THREE.Sphere()
+  box.getBoundingSphere(sphere)
+  const r = sphere.radius
+  if (r > 1e-6) {
+    const s = 1 / r
+    obj.scale.multiplyScalar(s)
+    obj.position.multiplyScalar(s)
+  }
 }
 
 function disposeObject3D(obj: THREE.Object3D): void {
@@ -94,6 +119,7 @@ export class ProjectilePool {
       group.name = `Missile_${i}`
       group.visible = false
       const visual = cloneTemplateObject(template)
+      normalizeMissileTemplate(visual)
       group.add(visual)
       this.group.add(group)
       this.missileSlots.push({ group, visual })
@@ -138,11 +164,9 @@ export class ProjectilePool {
   private writeMissileSlot(p: ProjectileState, slot: MissileSlot): void {
     this.scratchPos.set(p.pos[0], p.pos[1], p.pos[2])
     this.writeOrientation(p)
-    const scaleZ = 2.8
-    const scaleXY = 0.45
     slot.group.position.copy(this.scratchPos)
     slot.group.quaternion.copy(this.scratchQuat)
-    slot.group.scale.set(scaleXY, scaleXY, scaleZ)
+    slot.group.scale.setScalar(MISSILE_TEMPLATE_SCALE)
     slot.group.visible = true
   }
 
@@ -165,7 +189,8 @@ export class ProjectilePool {
     const len = Math.hypot(vx, vy, vz)
     if (len > 1e-6) {
       this.scratchDir.set(vx / len, vy / len, vz / len)
-      // Orient +Z along velocity.
+      // Orient local -Z along velocity (Three.js lookAt convention).
+      // Missile/ship templates are authored with forward -Z, so this matches gameplay forward -Z.
       this.scratchTarget.set(
         this.scratchPos.x + this.scratchDir.x,
         this.scratchPos.y + this.scratchDir.y,
