@@ -81,4 +81,21 @@ describe('player-profile', () => {
     writePlayerToken('   ', storage)
     expect(readPlayerToken(storage)).toBe('keep-me')
   })
+
+  it('guards browser cookie access failures when using default adapter', () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'document')
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      get() {
+        throw new Error('cookie access denied')
+      },
+    })
+    try {
+      expect(readPlayerName()).toBe('')
+      expect(() => writePlayerName('Pilot')).not.toThrow()
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'document', original)
+      else Reflect.deleteProperty(globalThis, 'document')
+    }
+  })
 })

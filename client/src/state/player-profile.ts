@@ -17,29 +17,37 @@ export interface StorageAdapter {
 
 class BrowserCookieAdapter implements CookieAdapter {
   get(name: string): string | null {
-    if (typeof document === 'undefined') return null
-    const prefix = `${encodeURIComponent(name)}=`
-    const parts = document.cookie ? document.cookie.split(';') : []
-    for (const part of parts) {
-      const trimmed = part.trim()
-      if (trimmed.startsWith(prefix)) {
-        const raw = trimmed.slice(prefix.length)
-        try {
-          return decodeURIComponent(raw)
-        } catch {
-          return raw
+    try {
+      if (typeof document === 'undefined') return null
+      const prefix = `${encodeURIComponent(name)}=`
+      const parts = document.cookie ? document.cookie.split(';') : []
+      for (const part of parts) {
+        const trimmed = part.trim()
+        if (trimmed.startsWith(prefix)) {
+          const raw = trimmed.slice(prefix.length)
+          try {
+            return decodeURIComponent(raw)
+          } catch {
+            return raw
+          }
         }
       }
+      return null
+    } catch {
+      return null
     }
-    return null
   }
 
   set(name: string, value: string, maxAgeDays = DEFAULT_COOKIE_MAX_AGE_DAYS): void {
-    if (typeof document === 'undefined') return
-    const maxAge = Math.max(0, Math.floor(maxAgeDays * 24 * 60 * 60))
-    const encodedName = encodeURIComponent(name)
-    const encodedValue = encodeURIComponent(value)
-    document.cookie = `${encodedName}=${encodedValue}; max-age=${maxAge}; path=/; samesite=lax`
+    try {
+      if (typeof document === 'undefined') return
+      const maxAge = Math.max(0, Math.floor(maxAgeDays * 24 * 60 * 60))
+      const encodedName = encodeURIComponent(name)
+      const encodedValue = encodeURIComponent(value)
+      document.cookie = `${encodedName}=${encodedValue}; max-age=${maxAge}; path=/; samesite=lax`
+    } catch {
+      // ignore cookie access failures in restricted environments
+    }
   }
 }
 
