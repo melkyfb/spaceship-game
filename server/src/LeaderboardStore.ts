@@ -38,7 +38,9 @@ export class LeaderboardStore {
   private drainScheduled = false;
   private draining: Promise<void> | null = null;
   private drainResolve: (() => void) | null = null;
+  private drainRetryCount = 0;
   private closed = false;
+  private static readonly MAX_DRAIN_RETRIES = 3;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -171,25 +173,60 @@ export class LeaderboardStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    // Best-effort synchronous drain on close.
-    this.drainNow();
-    this.db.close();
+    try {
+      // Best-effort synchronous drain on close.
+      this.drainNow();
+    } catch (err) {
+      console.error('[leaderboard-store] error draining on close; dropping queued scores', {
+        queued: this.queue.length,
+        err,
+      });
+    } finally {
+      if (this.queue.length > 0) {
+        console.error('[leaderboard-store] dropping queued scores on close', {
+          queued: this.queue.length,
+        });
+        this.queue.length = 0;
+      }
+      this.drainScheduled = false;
+      this.resolveDrain();
+      try {
+        this.db.close();
+      } catch (err) {
+        console.error('[leaderboard-store] error closing db', err);
+      }
+    }
   }
 
-  private scheduleDrain(): void {
+  private scheduleDrain(delayMs = 0): void {
     if (this.drainScheduled || this.closed) return;
     this.drainScheduled = true;
-    this.draining = new Promise<void>((resolve) => {
-      this.drainResolve = resolve;
-    });
-    setImmediate(() => {
+    if (!this.draining) {
+      this.draining = new Promise<void>((resolve) => {
+        this.drainResolve = resolve;
+      });
+    }
+    const run = () => {
       this.drainScheduled = false;
-      this.drainNow();
-    });
+      try {
+        this.drainNow();
+      } catch (err) {
+        // drainNow handles its own errors, but guard against unexpected throws.
+        console.error('[leaderboard-store] unexpected drain failure', err);
+        this.queue.length = 0;
+        this.resolveDrain();
+      }
+    };
+    if (delayMs > 0) {
+      setTimeout(run, delayMs);
+    } else {
+      setImmediate(run);
+    }
   }
 
   private drainNow(): void {
     if (this.queue.length === 0) {
+      this.drainRetryCount = 0;
       this.resolveDrain();
       return;
     }
@@ -204,13 +241,31 @@ export class LeaderboardStore {
     });
     try {
       tx(batch);
-    } finally {
-      if (this.queue.length === 0) {
-        this.resolveDrain();
-      } else {
-        // More items arrived during drain; schedule another pass.
-        this.scheduleDrain();
+      this.drainRetryCount = 0;
+    } catch (err) {
+      this.drainRetryCount += 1;
+      const context = {
+        batchSize: batch.length,
+        queuedRemaining: this.queue.length,
+        retry: this.drainRetryCount,
+        maxRetries: LeaderboardStore.MAX_DRAIN_RETRIES,
+        err,
+      };
+      if (this.drainRetryCount <= LeaderboardStore.MAX_DRAIN_RETRIES) {
+        console.error('[leaderboard-store] drain failed; requeueing batch', context);
+        this.queue.unshift(...batch);
+        this.scheduleDrain(50 * this.drainRetryCount);
+        return;
       }
+      console.error('[leaderboard-store] drain failed; dropping batch after retries', context);
+      this.drainRetryCount = 0;
+      // Drop failed batch; continue draining any newer queued items.
+    }
+
+    if (this.queue.length === 0) {
+      this.resolveDrain();
+    } else {
+      this.scheduleDrain();
     }
   }
 

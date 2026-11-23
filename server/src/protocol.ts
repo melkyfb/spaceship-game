@@ -17,6 +17,7 @@ export const MAX_INPUT_BATCH_CMDS = 16;
  * server-relative recency windows.
  */
 export const MAX_INPUT_BATCH_TICK_SPAN = 32;
+export const MAX_PLAYER_TOKEN_LENGTH = 128;
 
 export type DecodeResult<T> =
   | { ok: true; value: T }
@@ -93,6 +94,16 @@ function validateShipCommand(value: unknown): DecodeResult<ShipCommand> {
   };
 }
 
+function validatePlayerToken(value: unknown): DecodeResult<string | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (typeof value !== 'string') return err('JOIN.playerToken must be a string');
+  const token = value.trim();
+  if (token.length === 0) return err('JOIN.playerToken must be a non-empty string');
+  if (token.length > MAX_PLAYER_TOKEN_LENGTH) return err('JOIN.playerToken exceeds maximum length');
+  if (/[\x00-\x1f\x7f]/.test(token)) return err('JOIN.playerToken contains invalid characters');
+  return { ok: true, value: token };
+}
+
 function validateJoin(msg: Record<string, unknown>): DecodeResult<ClientMessage> {
   const roomId = msg.roomId;
   const name = msg.name;
@@ -102,7 +113,11 @@ function validateJoin(msg: Record<string, unknown>): DecodeResult<ClientMessage>
   if (typeof platform !== 'string' || !PLATFORM_MODES.includes(platform as PlatformMode)) {
     return err('JOIN.platform is invalid');
   }
-  return { ok: true, value: { t: 'JOIN', roomId, name, platform: platform as PlatformMode } };
+  const playerToken = validatePlayerToken(msg.playerToken);
+  if (!playerToken.ok) return playerToken;
+  const value: ClientMessage = { t: 'JOIN', roomId, name, platform: platform as PlatformMode };
+  if (playerToken.value !== undefined) value.playerToken = playerToken.value;
+  return { ok: true, value };
 }
 
 function validateInputBatch(msg: Record<string, unknown>): DecodeResult<ClientMessage> {

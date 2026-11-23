@@ -185,7 +185,7 @@ export class ServerRoom {
     }
 
     const playerId = randomUUID();
-    const requestedToken = (msg as { playerToken?: unknown }).playerToken;
+    const requestedToken = msg.playerToken;
     const playerToken = this.createPlayerToken(
       typeof requestedToken === 'string' && requestedToken.length > 0 ? requestedToken : undefined,
     );

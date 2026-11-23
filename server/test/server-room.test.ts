@@ -258,3 +258,33 @@ test('SCORE_RECORDED with missing playerToken is skipped, not recorded with empt
     console.warn = originalWarn;
   }
 });
+
+test('JOIN with known playerToken re-associates; unknown token gets a new opaque token', () => {
+  const known = new Set<string>(['known-token-1']);
+  const room = new ServerRoom({
+    roomId: 'default',
+    seed: 1,
+    createPlayerToken: (existing) => {
+      if (existing && known.has(existing)) return existing;
+      const minted = `minted-${known.size + 1}`;
+      known.add(minted);
+      return minted;
+    },
+  });
+
+  const a = new MockSocket();
+  room.handleOpen(a as never);
+  sendMsg(a, room, { t: 'JOIN', roomId: 'default', name: 'Alice', platform: 'PC', playerToken: 'known-token-1' } as ClientMessage);
+  const welcomeA = a.messages().find((m) => m.t === 'WELCOME');
+  assert.ok(welcomeA && welcomeA.t === 'WELCOME');
+  assert.equal(welcomeA.playerToken, 'known-token-1');
+
+  const b = new MockSocket();
+  room.handleOpen(b as never);
+  sendMsg(b, room, { t: 'JOIN', roomId: 'default', name: 'Bob', platform: 'PC', playerToken: 'unknown-token' } as ClientMessage);
+  const welcomeB = b.messages().find((m) => m.t === 'WELCOME');
+  assert.ok(welcomeB && welcomeB.t === 'WELCOME');
+  assert.equal(typeof welcomeB.playerToken, 'string');
+  assert.notEqual(welcomeB.playerToken, 'unknown-token');
+  assert.ok((welcomeB.playerToken ?? '').length > 0);
+});

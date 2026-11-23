@@ -95,7 +95,7 @@ export function isClientMessageType(value: unknown): value is ClientMessageType 
 }
 
 export type ClientMessage =
-  | { t: 'JOIN'; roomId: string; name: string; platform: PlatformMode }
+  | { t: 'JOIN'; roomId: string; name: string; platform: PlatformMode; playerToken?: string }
   | { t: 'INPUT_BATCH'; cmds: ShipCommand[] }
   | { t: 'PING'; clientTime: number }
   | { t: 'RESPAWN_REQUEST' }

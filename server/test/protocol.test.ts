@@ -7,6 +7,7 @@ import {
   MAX_CLIENT_MESSAGE_BYTES,
   MAX_INPUT_BATCH_CMDS,
   MAX_INPUT_BATCH_TICK_SPAN,
+  MAX_PLAYER_TOKEN_LENGTH,
   type DecodeResult,
 } from '../src/protocol';
 import type { ClientMessage, ServerMessage, ShipCommand } from '../../shared/src/types';
@@ -43,6 +44,32 @@ test('decodeClientMessage accepts valid JOIN', () => {
   const msg: ClientMessage = { t: 'JOIN', roomId: 'default', name: 'Pilot', platform: 'PC' };
   const value = expectOk(decodeClientMessage(encode(msg)));
   assert.deepEqual(value, msg);
+});
+
+test('decodeClientMessage accepts JOIN with optional playerToken and sanitizes it', () => {
+  const bytes = encode({
+    t: 'JOIN',
+    roomId: 'default',
+    name: 'Pilot',
+    platform: 'PC',
+    playerToken: '  abc-123_TOKEN  ',
+  });
+  const value = expectOk(decodeClientMessage(bytes));
+  assert.deepEqual(value, {
+    t: 'JOIN',
+    roomId: 'default',
+    name: 'Pilot',
+    platform: 'PC',
+    playerToken: 'abc-123_TOKEN',
+  });
+});
+
+test('decodeClientMessage rejects invalid JOIN playerToken', () => {
+  expectErr(decodeClientMessage(encode({ t: 'JOIN', roomId: 'default', name: 'Pilot', platform: 'PC', playerToken: '' })));
+  expectErr(decodeClientMessage(encode({ t: 'JOIN', roomId: 'default', name: 'Pilot', platform: 'PC', playerToken: '   ' })));
+  expectErr(decodeClientMessage(encode({ t: 'JOIN', roomId: 'default', name: 'Pilot', platform: 'PC', playerToken: 123 })));
+  expectErr(decodeClientMessage(encode({ t: 'JOIN', roomId: 'default', name: 'Pilot', platform: 'PC', playerToken: 'a'.repeat(MAX_PLAYER_TOKEN_LENGTH + 1) })));
+  expectErr(decodeClientMessage(encode({ t: 'JOIN', roomId: 'default', name: 'Pilot', platform: 'PC', playerToken: 'bad\n token' })));
 });
 
 test('decodeClientMessage accepts valid PING, RESPAWN_REQUEST, QUIT', () => {

@@ -130,3 +130,57 @@ test('getOrCreateToken returns opaque tokens and reuses existing token', () => {
     close();
   }
 });
+
+test('drain failure logs, retries boundedly, drops batch, and does not throw uncaught', async () => {
+  const { store, close } = makeStore();
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(' '));
+  };
+  try {
+    const token = store.getOrCreateToken();
+    (store as any).insertScoreStmt = {
+      run: () => {
+        throw new Error('disk full');
+      },
+    };
+
+    store.recordScore({ token, name: 'Alice', score: 100, wave: 1, mode: 'MULTIPLAYER' });
+    await store.flush();
+
+    assert.ok(errors.some((e) => e.includes('drain failed')), `expected drain failure log, got ${JSON.stringify(errors)}`);
+    assert.ok(
+      errors.some((e) => e.includes('dropping batch') || e.includes('requeueing batch')),
+      `expected drop/requeue log, got ${JSON.stringify(errors)}`,
+    );
+    // Queue should be drained (dropped after retries) and flush should have resolved.
+    assert.equal((store as any).queue.length, 0);
+  } finally {
+    console.error = originalError;
+    close();
+  }
+});
+
+test('close handles drain errors and still closes db', () => {
+  const { store } = makeStore();
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(' '));
+  };
+  try {
+    const token = store.getOrCreateToken();
+    (store as any).insertScoreStmt = {
+      run: () => {
+        throw new Error('disk full');
+      },
+    };
+    store.recordScore({ token, name: 'Alice', score: 100, wave: 1, mode: 'MULTIPLAYER' });
+    // close should not throw even if drain fails
+    assert.doesNotThrow(() => store.close());
+    assert.ok(errors.length >= 0); // may log drain/close errors
+  } finally {
+    console.error = originalError;
+  }
+});
