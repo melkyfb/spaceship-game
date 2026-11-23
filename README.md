@@ -2,15 +2,16 @@
 
 Monorepo do Asteroids 3D. Este repositório entrega a **Fase 1 (M1) — núcleo
 matemático e física determinística** no pacote isomórfico `shared/`, o **M0 —
-cliente Vite/TypeScript com servidor de desenvolvimento HTTPS confiável, status
-WebSocket e proxy `/ws` na mesma origem** (além do stub WS em `server/`), o
-**M2 — cockpit 3D procedural, pipeline de render tri-modal (Flat / VR Box / Quest 3
-WebXR) e HUD diegético com radar e offscreen pips, sem assets externos**, o
-**M3 — sistema de input cross-platform com normalização comum, InputManager e
-adaptadores Desktop/Touch/VR Box/Quest XR** e o **M4 — vertical slice jogável em
-modo solo (US-11/US-12)** com sim determinística em Web Worker (`LocalTransport`/
-`GameRoom`), asteroides fragmentáveis por tier, IA inimiga com ondas/orçamento e
-áudio procedural 3D. O servidor multiplayer autoritativo real (M5) ainda será adicionado.
+cliente Vite/TypeScript com servidor de desenvolvimento HTTPS confiável e proxy `/ws`
+na mesma origem**, o **M2 — cockpit 3D procedural, pipeline de render tri-modal
+(Flat / VR Box / Quest 3 WebXR) e HUD diegético com radar e offscreen pips, sem assets
+externos**, o **M3 — sistema de input cross-platform com normalização comum,
+InputManager e adaptadores Desktop/Touch/VR Box/Quest XR**, o **M4 — vertical slice
+jogável em modo solo (US-11/US-12)** com sim determinística em Web Worker
+(`LocalTransport`/`GameRoom`), asteroides fragmentáveis por tier, IA inimiga com
+ondas/orçamento e áudio procedural 3D, e o **M5 — multiplayer autoritativo, respawn e
+leaderboards** com modos **Treinamento** e **Multiplayer**, tela inicial, morte sem game
+over, respawn/desistir, leaderboard local (`localStorage`) e global (SQLite no servidor).
 
 ## Pré-requisitos
 
@@ -47,14 +48,14 @@ pnpm -C client typecheck  # tsc --noEmit (strict + noUncheckedIndexedAccess)
 pnpm -C client test       # Vitest (buildWsUrl + demais testes do cliente)
 ```
 
-### Pacote `server` (stub WS do M0)
+### Pacote `server` (M5 — autoritativo WS/MessagePack + leaderboard SQLite)
 
 ```bash
-pnpm -C server dev        # stub WebSocket em ws://localhost:8080 (tsx)
-pnpm -C server build      # tsc --noEmit (checagem; sem emissão nesta fase)
-pnpm -C server typecheck  # tsc --noEmit (strict + noUncheckedIndexedAccess)
-pnpm -C server test       # node:test via tsx: contrato hello/pong do stub WS
-```
+pnpm -C server dev        # servidor WebSocket autoritativo em ws://localhost:8080 (tsx)
+pnpm -C server build      # tsc -p tsconfig.json --noEmit (checagem; sem emissão)
+pnpm -C server typecheck  # tsc -p tsconfig.json --noEmit (strict + noUncheckedIndexedAccess)
+pnpm -C server test       # node:test via tsx: protocolo, RoomManager/ServerRoom, LeaderboardStore, WS
+``
 
 ### Raiz do workspace (aplica o script a todos os pacotes via `pnpm -r`)
 
@@ -106,44 +107,35 @@ do PC mudar, reinicie `pnpm -C client dev` para que o plugin regere o certificad
 > repositório. A abertura em Android Chrome / Meta Quest Browser **ainda não foi
 > executada** e, portanto, não é afirmada como válida neste documento.
 
-## WebSocket de desenvolvimento (stub + proxy `/ws`)
+## WebSocket / Multiplayer autoritativo (M5)
 
-O stub em `server/src/index.ts` escuta em `ws://localhost:8080`. Ao conectar, envia
-`{"t":"hello"}`; ao receber `{"t":"ping"}`, responde `{"t":"pong"}`. É apenas um stub
-de desenvolvimento — sem netcode, física ou gameplay.
+O servidor em `server/src/index.ts` sobe o WebSocket autoritativo em `ws://localhost:8080`,
+com `RoomManager`/`ServerRoom`, protocolo MessagePack, sanitização de payload (`512` bytes),
+`INPUT_BATCH` redundante, PING/PONG, leaderboard global SQLite (`server/data/leaderboard.db`,
+gitignored) e sala default com limite `MAX_PLAYERS_PER_ROOM=8`.
 
-O `client/vite.config.ts` expõe o stub na **mesma origem** da página via proxy:
+O `client/vite.config.ts` expõe o servidor na **mesma origem** da página via proxy:
 `/ws` → `ws://localhost:8080`, com `ws: true` e `changeOrigin: true`. A mesma configuração
-de proxy vale para `dev` (5173) e `preview` (4173), para que ambos os comandos HTTPS
-documentados se comportem de forma idêntica. A página usa
-`buildWsUrl(window.location)` (`client/src/ws-status.ts`), que gera `wss://<host>/ws`
-em páginas HTTPS e `ws://<host>/ws` em HTTP — evitando mixed content e dispensando
-portas ou certificados adicionais nos dispositivos. O status aparece no HUD de texto:
-`connecting` → `connected` → `hello received` (ou `error` / `closed` em caso de falha;
-o código e o motivo do `close` são registrados no console).
+vale para `dev` (5173) e `preview` (4173). Em HTTPS, o cliente usa `wss://<host>/ws`,
+evitando mixed content em PC/LAN/Quest.
 
-### Verificação manual do WS
+### Rodar Multiplayer (2 clientes)
 
 ```bash
-# Terminal A
+# Terminal A — servidor autoritativo
 pnpm -C server dev
-# Terminal B
+
+# Terminal B — cliente HTTPS
 pnpm -C client dev
 ```
 
-Abra `https://localhost:5173` (ou `https://<IP-LAN>:5173`) e confirme que o status
-mostra `WS: hello received`. O contrato do stub também pode ser checado diretamente:
+Abra `https://localhost:5173` em dois navegadores/dispositivos, escolha **Multiplayer** na
+tela inicial, informe nome e inicie. O modo **Treinamento** não depende do servidor.
 
-```
-conectar em ws://localhost:8080 → recebe {"t":"hello"}
-enviar {"t":"ping"}             → recebe {"t":"pong"}
-```
-
-> **Status de validação:** o contrato hello/pong do stub é coberto por teste automatizado
-> (`pnpm -C server test`) e o proxy `/ws` foi verificado com cliente WS automatizado neste
-> repositório. A exibição no navegador e o teste em Android Chrome / Meta Quest Browser
-> **não foram executados**: o diálogo de confiança da CA do mkcert está bloqueado neste
-> desktop (ver seção anterior).
+> **Status de validação M5:** testes automatizados de protocolo, sala, leaderboard e WS
+> passam (ver `docs/superpowers/specs/2026-11-23-m5-multiplayer-authoritative-verification.md`).
+> Validação real em dois clientes/dispositivos, latência 100ms+/perda e Quest/VR Box/Android
+> permanece **PENDENTE**.
 
 ## Checklist manual US-02 (validação em dispositivos)
 
@@ -332,7 +324,64 @@ Preenchido apenas com itens realmente executados; o que não foi executado está
 
 > **Limitações M4:** validação real de dispositivo/FPS/conforto/balanceamento fino não executada
 > nesta sessão. AudioContext depende de gesto/política do browser e degrada silenciosamente em falha.
-> LocalTransport é solo local com seed fixa; multiplayer autoritativo fica para M5.
+> Treinamento usa `LocalTransport` (worker local, seed fixa). Multiplayer autoritativo é entregue no M5.
+
+## M5 — Multiplayer Autoritativo, Respawn e Leaderboard (US-13/US-14)
+
+O M5 adiciona a tela inicial, modos **Treinamento** e **Multiplayer**, morte sem game over,
+respawn/desistir, câmera de morte, e leaderboards local/global.
+
+### Modos e fluxo
+
+- **Tela inicial (`StartScreen`):** nome do piloto (cookie `asteroids_player_name`), seleção
+  `Treinamento` / `Multiplayer`, Top 10 do modo selecionado e ação iniciar.
+- **Treinamento:** usa `LocalTransport` + `GameRoom` no Web Worker; funciona offline, sem
+  servidor/SQLite. Leaderboard local em `localStorage` (`asteroids_leaderboard_local_v1`).
+- **Multiplayer:** usa `WsTransport` (MessagePack binário) para `/ws` na mesma origem/proxy.
+  Servidor autoritativo em `server/` com `RoomManager`/`ServerRoom`, sala default, limite
+  `MAX_PLAYERS_PER_ROOM=8`, sim 30Hz, broadcast 20Hz.
+- **Morte/respawn:** sem game over. Ao morrer, a run atual registra score (quando elegível),
+  mostra killer e overlay com contador `RESPAWN_DELAY_SEC=3.0`. Botão `Respawn` habilita após
+  o timer e envia `RESPAWN_REQUEST`; `Desistir` envia `QUIT` e volta à tela inicial.
+- **Score:** score da run é zerado no respawn. Registra ao morrer e ao desistir/quit/desconexão
+  se score > 0. Treinamento persiste no `localStorage`; Multiplayer persiste no SQLite
+  (`server/data/leaderboard.db`, gitignored) com `playerToken` opaco.
+- **Leaderboard HUD:** canto superior esquerdo durante gameplay; mostra top 10 + linha do
+  jogador com score atual da run e melhor posição/score registrado quando disponível.
+
+### Comandos
+
+```bash
+# Terminal A — servidor autoritativo (Multiplayer)
+pnpm -C server dev
+
+# Terminal B — cliente HTTPS
+pnpm -C client dev
+```
+
+Verificação automatizada:
+
+```bash
+pnpm -r typecheck
+pnpm -r test
+pnpm -C client build
+```
+
+### Checklist manual M5 (validação em dispositivo/rede)
+
+Preenchido apenas com itens realmente executados; o que não foi executado está `PENDENTE`.
+Não fabricar validação de dispositivo/latência.
+
+| Cenário | Status | Evidência | Observações |
+| --- | --- | --- | --- |
+| PC — Treinamento offline, respawn/desistir, leaderboard local | `PENDENTE` | Testes automatizados PASS (2026-11-23) | Requer navegador real; validar sem servidor ativo. |
+| PC — 2 clientes Multiplayer, join/snapshot, leaderboard global | `PENDENTE` | Integração server-room PASS (2026-11-23) | Requer `server dev` + dois browsers. |
+| Android Chrome (Flat) — UI/start/respawn/controles | `PENDENTE` | Não executado | Requer CA mkcert instalada no dispositivo. |
+| VR Box (Android + visor + gamepad BT) — conforto/controles/câmera morte | `PENDENTE` | Não executado | ADR-01: cabeça não move nave. |
+| Meta Quest 3 (WebXR) — sessão VR, HUD/overlay, 72–90 FPS | `PENDENTE` | Não executado | FPS/conforto não medidos. |
+| Rede real 100ms+/perda de pacote — predição/reconciliação/interpolação | `PENDENTE` | Não executado | Não afirmar validação sem evidência. |
+
+Fonte autoritativa: `docs/superpowers/specs/2026-11-23-m5-multiplayer-authoritative-verification.md`.
 
 ## Estrutura atual
 
@@ -340,7 +389,7 @@ Preenchido apenas com itens realmente executados; o que não foi executado está
 shared/
   src/
     constants.ts   # constantes calibradas do spec (seção 4.1)
-    types.ts       # contratos de estado/comando/protocolo (seção 4.3)
+    types.ts       # contratos de estado/comando/protocolo (seção 4.3, M5)
     math.ts        # clamp/finite, SpatialHash3D, swept segment/sphere
     physics.ts     # FIXED_DT = 1/30, damping, quatérnio, fronteira magnética, stepShip
     collision.ts   # resolvers swept projétil/asteroide e nave/asteroide + pool de eventos
@@ -349,79 +398,63 @@ shared/
       spawn.ts       # spawn seguro em casca + fragmentação por ASTEROID_TIERS
       WaveManager.ts # orçamento 10+4*w+2*Nplayers e planejamento de ondas
       EnemyAI.ts     # steering 3D + 5-ray cone avoidance (SCOUT/BRUISER/SCAVENGER)
-      GameRoom.ts    # loop fixo 30Hz, snapshots 20Hz, eventos, colisões/pickups/waves
+      GameRoom.ts    # loop fixo 30Hz, snapshots 20Hz, eventos, respawn/score/killer (M5)
       index.ts       # exports da sim
     index.ts       # exports públicos
-  test/            # Vitest: constants, math, physics, collision, smoke, sim/*
+  test/            # Vitest: constants, math, physics, collision, smoke, sim/*, protocol-types
 client/
   index.html       # página de entrada (#app)
   vite.config.ts   # HTTPS (mkcert), 0.0.0.0:5173 / preview 4173 + proxy /ws em ambos
   src/
-    main.ts        # bootstrap GameApp + ?render= + hooks dev + gesto de áudio + status WS M0
+    main.ts        # bootstrap GameApp + ?render= + hooks dev + gesto de áudio
     ws-status.ts   # buildWsUrl() — URL WS na mesma origem (wss para https)
     style.css
     core/
-      GameApp.ts         # Scene/renderer, loop, input, transport, snapshot apply, pools, áudio
+      GameApp.ts         # Scene/renderer, loop, input, transport, modos M5, respawn/death cam
+      m5-flow.ts         # helpers puros M5 (respawn timer, killer camera target, score record)
       Starfield.ts       # campo estelar procedural sem assets
       CockpitRig.ts      # hierarquia ShipRoot/CockpitFrame/PilotHeadRig (spec 4.4)
       render-config.ts   # constantes barrel/IPD/DPR/XR
       RenderPipeline.ts  # FLAT / VR_BOX (estéreo + barrel) / QUEST_3 (WebXR)
     net/
       ITransport.ts      # contrato connect/send/onMessage/close
-      LocalTransport.ts  # ponte main thread <-> Web Worker
+      LocalTransport.ts  # ponte main thread <-> Web Worker (Treinamento)
       local.worker.ts    # GameRoom em Worker (30Hz, snapshots 20Hz, eventos)
-    entities/
-      AsteroidPool.ts    # InstancedMesh por tier (LARGE/MEDIUM/SMALL)
-      ProjectilePool.ts  # InstancedMesh de projéteis
-      EnemyShip.ts       # InstancedMesh por arquétipo (SCOUT/BRUISER/SCAVENGER)
-      ShipPool.ts        # InstancedMesh de naves remotas
-      ParticleSystem.ts  # pool fixo de partículas vetoriais (EXPLOSION/HIT/DEATH)
+      WsTransport.ts     # WebSocket MessagePack (Multiplayer)
+      ClockSync.ts       # PING/PONG offset/RTT
+      Predictor.ts       # predição local + reconciliação suavizada
+      Interpolator.ts    # buffer/interpolação remotos (100ms delay)
+    entities/            # AsteroidPool, ProjectilePool, EnemyShip, ShipPool, ParticleSystem
     audio/
       SoundSynth.ts      # Web Audio API + PannerNode, síntese procedural, gesto obrigatório
-    input/
-      input-math.ts          # clampAxis, deadzone radial 0.15, curva exponencial 1.6
-      types.ts               # InputAdapter/InputState/NormalizedAxes
-      InputManager.ts        # orquestra adaptador ativo e gera ShipCommand
-      desktop-input-math.ts  # mapeamento puro de teclas/botões desktop
-      DesktopInput.ts        # teclado/mouse PointerLock/gamepad/Alt free-look (ADR-02)
-      TouchInput.ts          # joysticks dinâmicos multitouch + FIRE/MISSILE/BOOST
-      VRBoxInput.ts          # DeviceOrientation relativo YXZ, WakeLock/fullscreen, wizard BT
-      vrbox-math.ts          # deviceOrientationToQuaternionYXZ
-      vrbox-wizard.ts        # wizard sequencial de mapeamento BT (3 passos)
-      gamepad-mapping.ts     # persistência/validação de mapeamento em localStorage
-      QuestXRInput.ts        # WebXR XRInputSource, recenter, haptics seguros
-      quest-xr-mapping.ts    # mapeamento puro Quest Touch (deadzone/curva 1.6)
+    input/               # InputManager + adapters Desktop/Touch/VRBox/QuestXR + math/mapping
+    state/
+      player-profile.ts    # nome (cookie) e playerToken opaco
+      leaderboard-local.ts # top 10 local (localStorage)
     ui/
       hud-math.ts        # helpers puros: radar/pip/throttle
       DiegeticHUD.ts     # CanvasTexture 512x256, dirty-flag 15Hz, radar
       OffscreenPips.ts   # pool de 16 setas radiais (sem alocação por frame)
-  test/
-    ws-status.test.ts          # buildWsUrl (https → wss, http → ws)
-    render-config.test.ts      # constantes da spec + limites de IPD
-    hud-math.test.ts           # projeção radar/pip + throttle 15Hz
-    offscreen-pips.test.ts     # pips dentro/fora do FOV
-    diegetic-hud.test.ts       # sweep 15Hz com estado estático / idle com dt=0
-    render-pipeline-xr.test.ts # botão Enter VR, sessão e falha recuperável (XR stubado)
-    input-math.test.ts         # deadzone radial, curva, clamp
-    input-manager.test.ts      # merge/prioridade/reset/dispose
-    desktop-input-math.test.ts # mapeamento puro teclado/mouse
-    desktop-input.test.ts      # comportamento do adapter desktop
-    touch-input-math.test.ts   # normalização/atribuição de toques
-    gamepad-mapping.test.ts    # persistência/validação de mapeamento
-    vrbox-math.test.ts         # quaternion YXZ e calibração de eixo
-    vrbox-wizard.test.ts       # wizard de mapeamento BT
-    quest-xr-mapping.test.ts   # mapeamento puro Quest XR
-    net/local-transport.test.ts    # contrato LocalTransport/Worker mockado
-    entities/asteroid-pool.test.ts # mapeamento/capacidade de instâncias de asteroides
-    audio/sound-synth.test.ts      # AudioContext mock, gesto/resume, playEvent seguro
+      StartScreen.ts     # tela inicial: nome, modo, top 10, iniciar
+      RespawnOverlay.ts  # morte: killer, contador 3s, Respawn/Desistir
+      LeaderboardHud.ts  # HUD top 10 + linha do jogador atual
+  test/              # Vitest: render/input/net/state/entities/audio/ui/m5
   vitest.config.ts
 server/
-  package.json     # ws + tsx (scripts dev/test)
+  package.json     # ws, @msgpack/msgpack, better-sqlite3, tsx
   tsconfig.json
   src/
-    index.ts       # entry point: inicia o stub na porta 8080
-    ws-server.ts   # createWebSocketServer(): hello/pong + handlers de erro
-  test/ws-server.test.ts  # node:test: hello on connect, pong on ping (porta efêmera)
+    index.ts           # bootstrap WS server + RoomManager + LeaderboardStore
+    ws-server.ts       # WebSocketServer, rawData->bytes, wiring RoomManager
+    RoomManager.ts     # sala default, roteamento open/message/close
+    ServerRoom.ts      # GameRoom shared + conexões, tick 30Hz, broadcast 20Hz, QUIT/RESPAWN
+    protocol.ts        # decode/encode msgpack, validação/sanitização (512 bytes)
+    LeaderboardStore.ts # SQLite top 10 global, token opaco, best/rank
+  test/
+    ws-server.test.ts
+    server-room.test.ts
+    protocol.test.ts
+    leaderboard-store.test.ts
 ```
 
 `shared/` é isomórfico: não importa `three`, `window`, `document`, `fs` ou `crypto`, e não
@@ -445,6 +478,9 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
 - Plano M4 (solo vertical slice): `docs/superpowers/plans/2026-11-22-m4-solo-vertical-slice.md`
 - Design e verificação M4 (LocalTransport/Worker, fragmentação, ondas/IA, áudio, checklist): `docs/superpowers/specs/2026-11-22-m4-solo-vertical-slice-design.md`
 - SDD/ledger M4: `.superpowers/sdd/2026-11-22-m4-solo-vertical-slice/`
+- Plano M5 (multiplayer autoritativo, respawn, leaderboard): `docs/superpowers/plans/2026-11-23-m5-multiplayer-authoritative.md`
+- Design M5: `docs/superpowers/specs/2026-11-23-m5-multiplayer-authoritative-design.md`
+- Verificação M5 (comandos reais, integração, checklist PENDENTE): `docs/superpowers/specs/2026-11-23-m5-multiplayer-authoritative-verification.md`
 
 ## Próximos passos
 
@@ -459,5 +495,7 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
 - M4 / US-11..12: validação em dispositivo do checklist M4 (PC/Android/VR Box/Quest 3),
   FPS real, conforto, áudio após gesto e balanceamento fino — tudo `PENDENTE` neste ambiente.
   Ambiguidade US-11 documentada: implementação segue `ASTEROID_TIERS`.
-- M5: evoluir LocalTransport/Worker para servidor autoritativo multiplayer, reaproveitando
-  a sim isomórfica em `shared/src/sim`.
+- M5 / US-13..US-14: validação real em 2+ clientes/dispositivos, Treinamento offline, respawn/
+  desistir, killer camera, leaderboard local/global com restart do servidor, latência 100ms+/
+  perda de pacote, Quest 3/VR Box/Android — tudo `PENDENTE` nesta sessão. Não fabricar
+  evidência de dispositivo/latência.
