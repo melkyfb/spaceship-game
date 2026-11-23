@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { FIXED_DT } from '../../src/physics'
 import { GameRoom } from '../../src/sim/GameRoom'
 import type { ServerMessage, ShipCommand } from '../../src/types'
 
@@ -179,6 +180,47 @@ describe('GameRoom', () => {
     expect(shipAfter.rot).not.toEqual(shipBefore.rot)
     expect(shipAfter.lastProcessedTick).toBe(1)
     expect(a.events.some((e) => e.kind === 'HIT')).toBe(true)
+  })
+
+  it('preserves stepShip position integration on ship-asteroid collision tick', () => {
+    const baseRoom = new GameRoom({ seed: 99, playerId: 'p1', playerName: 'Pilot', platform: 'PC', spawnInitialWave: false, initialWave: 1 })
+    baseRoom.enqueue([makeCmd(1, { thrust: 1, yaw: 0.5 })])
+    baseRoom.stepFixed()
+    const baseSnap = baseRoom.createSnapshot()
+    if (!isSnapshot(baseSnap)) throw new Error('expected snapshot')
+    const baseShip = baseSnap.ships[0]!
+
+    const collRoom = new GameRoom({
+      seed: 99, playerId: 'p1', playerName: 'Pilot', platform: 'PC', spawnInitialWave: false, initialWave: 1,
+      initialAsteroids: [{ id: 500, pos: [0, 0, -10], vel: [0, 0, 0], rot: [0, 0, 0, 1], angVel: [0, 0, 0], size: 'LARGE', hp: 1000 }],
+    })
+    collRoom.enqueue([makeCmd(1, { thrust: 1, yaw: 0.5 })])
+    collRoom.stepFixed()
+    const collSnap = collRoom.createSnapshot()
+    if (!isSnapshot(collSnap)) throw new Error('expected snapshot')
+    const collShip = collSnap.ships[0]!
+    const ast = collSnap.asteroids.find((a) => a.id === 500)!
+
+    // Position should remain close to stepShip-integrated baseline, adjusted only by minimal separation.
+    const dx = collShip.pos[0] - baseShip.pos[0]
+    const dy = collShip.pos[1] - baseShip.pos[1]
+    const dz = collShip.pos[2] - baseShip.pos[2]
+    const sepMag = Math.hypot(dx, dy, dz)
+    expect(sepMag).toBeLessThan(10)
+
+    // Old buggy reconstruction: pos = basePos + (collVel-baseVel)*FIXED_DT
+    const oldRecon = [
+      baseShip.pos[0] + (collShip.vel[0] - baseShip.vel[0]) * FIXED_DT,
+      baseShip.pos[1] + (collShip.vel[1] - baseShip.vel[1]) * FIXED_DT,
+      baseShip.pos[2] + (collShip.vel[2] - baseShip.vel[2]) * FIXED_DT,
+    ]
+    const oldDist = Math.hypot(collShip.pos[0]! - oldRecon[0]!, collShip.pos[1]! - oldRecon[1]!, collShip.pos[2]! - oldRecon[2]!)
+    // New behavior should differ from old full-reintegration reconstruction.
+    expect(oldDist).toBeGreaterThan(0.01)
+
+    // Must not be deeply embedded in asteroid.
+    const distToAst = Math.hypot(collShip.pos[0]! - ast.pos[0]!, collShip.pos[1]! - ast.pos[1]!, collShip.pos[2]! - ast.pos[2]!)
+    expect(distToAst).toBeGreaterThanOrEqual(14 + 2.2 - 0.05)
   })
 
   it('emits PLAYER_DEATH and WAVE_CLEAR events in focused scenarios', () => {

@@ -688,13 +688,33 @@ export class GameRoom {
       const dvy = sweep.vel[1] - dispVy
       const dvz = sweep.vel[2] - dispVz
 
-      // Apply bounce delta on top of stepShip result (preserves accel/drag integration).
+      // Apply bounce delta on top of stepShip result; preserve stepShip position.
       s.vel[0] += dvx
       s.vel[1] += dvy
       s.vel[2] += dvz
-      s.pos[0] += dvx * FIXED_DT
-      s.pos[1] += dvy * FIXED_DT
-      s.pos[2] += dvz * FIXED_DT
+
+      // Minimal separation only when collision modified velocity, to avoid deep embed.
+      if ((dvx * dvx + dvy * dvy + dvz * dvz) > 1e-12) {
+        const sr = SHIP_CONFIG.RADIUS
+        for (let ai = 0; ai < this.asteroids.length; ai++) {
+          const a = this.asteroids[ai]
+          if (a === undefined) continue
+          const ar = ASTEROID_TIERS[a.size].radius
+          const nx0 = s.pos[0] - a.pos[0]
+          const ny0 = s.pos[1] - a.pos[1]
+          const nz0 = s.pos[2] - a.pos[2]
+          const d2 = nx0 * nx0 + ny0 * ny0 + nz0 * nz0
+          const minD = sr + ar
+          if (d2 >= minD * minD) continue
+          const d = Math.sqrt(d2)
+          let nx = 1, ny = 0, nz = 0
+          if (d > 1e-9) { nx = nx0 / d; ny = ny0 / d; nz = nz0 / d }
+          const push = (minD - d) + 1e-3
+          s.pos[0] += nx * push
+          s.pos[1] += ny * push
+          s.pos[2] += nz * push
+        }
+      }
 
       if (s.shield <= 0 && s.alive) {
         this.killShip(s)
