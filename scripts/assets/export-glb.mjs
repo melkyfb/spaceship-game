@@ -89,12 +89,7 @@ function canAutoExport(sourcePath) {
   return ['.blend', '.fbx', '.obj', '.glb', '.gltf'].includes(ext)
 }
 
-function runBlenderExport(blender, item) {
-  const scriptPath = path.resolve(__dirname, 'blender_export.py')
-  const sourcePath = resolveRepoPath(item.source)
-  const outputPath = resolveRepoPath(item.output)
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-
+export function buildBlenderArgs({ scriptPath, sourcePath, outputPath, forward, targetRadius, nodeFilter, rotationDeg, id }) {
   const args = [
     '-b',
     '--factory-startup',
@@ -103,13 +98,32 @@ function runBlenderExport(blender, item) {
     '--source', sourcePath,
     '--output', outputPath,
   ]
-  if (item.forward) args.push(`--forward=${String(item.forward)}`)
-  if (Number.isFinite(item.targetRadius)) args.push('--target-radius', String(item.targetRadius))
-  if (item.nodeFilter) args.push('--node-filter', String(item.nodeFilter))
-  if (Array.isArray(item.rotationDeg) && item.rotationDeg.length === 3) {
-    args.push('--rotation-deg', item.rotationDeg.map((n) => String(n)).join(','))
+  if (forward) args.push(`--forward=${String(forward)}`)
+  if (Number.isFinite(targetRadius)) args.push('--target-radius', String(targetRadius))
+  if (nodeFilter) args.push('--node-filter', String(nodeFilter))
+  if (Array.isArray(rotationDeg) && rotationDeg.length === 3) {
+    args.push('--rotation-deg', rotationDeg.map((n) => String(n)).join(','))
   }
-  if (item.id) args.push('--id', String(item.id))
+  if (id) args.push('--id', String(id))
+  return args
+}
+
+function runBlenderExport(blender, item) {
+  const scriptPath = path.resolve(__dirname, 'blender_export.py')
+  const sourcePath = resolveRepoPath(item.source)
+  const outputPath = resolveRepoPath(item.output)
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+
+  const args = buildBlenderArgs({
+    scriptPath,
+    sourcePath,
+    outputPath,
+    forward: item.forward,
+    targetRadius: item.targetRadius,
+    nodeFilter: item.nodeFilter,
+    rotationDeg: item.rotationDeg,
+    id: item.id,
+  })
 
   const r = spawnSync(blender.bin, args, { encoding: 'utf8', cwd: repoRoot, shell: false })
   const stdout = String(r.stdout || '').trim()
@@ -261,7 +275,10 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err?.stack || String(err))
-  process.exit(1)
-})
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename)
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(err?.stack || String(err))
+    process.exit(1)
+  })
+}

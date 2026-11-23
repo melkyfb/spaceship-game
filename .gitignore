@@ -11,3 +11,6 @@ server/data/*.db
 server/data/*.db-*
 server/data/*.sqlite
 server/data/*.sqlite-*
+
+# Generated asset export reports
+scripts/assets/out/

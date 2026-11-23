@@ -337,4 +337,3 @@ Para cada asset integrado, validar:
 ## Observações
 
 - Este relatório foi baseado na inspeção do diretório `assets/` e metadados/arquivos disponíveis no workspace; **orientação/pivô/hierarquia interna final devem ser confirmados no DCC (Blender/3ds Max/Maya)** antes do export definitivo.
-- O estado atual do projeto já tem o fix 0.1.0-alpha (mouse follow-cursor e score apenas multiplayer) commitado localmente; o push anterior enviou até `af84b5f`. O commit de correção local atual pode ser enviado quando você confirmar.
