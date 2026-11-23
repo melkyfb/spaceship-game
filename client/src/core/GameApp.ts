@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import type { ClientMessage, ServerMessage, ShipCommand } from '@asteroids/shared'
+import type { ClientMessage, PlatformMode, ServerMessage, ShipCommand, ShipState } from '@asteroids/shared'
+import { WORLD_CONFIG } from '@asteroids/shared'
 import { CockpitRig } from './CockpitRig'
 import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield, recenterStarfield } from './Starfield'
@@ -14,11 +15,34 @@ import { InputManager } from '../input/InputManager'
 import { QuestXRInput } from '../input/QuestXRInput'
 import { TouchInput } from '../input/TouchInput'
 import { VRBoxInput } from '../input/VRBoxInput'
+import { ClockSync } from '../net/ClockSync'
+import { Interpolator } from '../net/Interpolator'
 import { LocalTransport } from '../net/LocalTransport'
+import { Predictor } from '../net/Predictor'
+import { WsTransport } from '../net/WsTransport'
 import type { ITransport } from '../net/ITransport'
+import {
+  loadLocalLeaderboard,
+  recordLocalScore,
+  type RankedLocalLeaderboardEntry,
+} from '../state/leaderboard-local'
+import { readPlayerName, readPlayerToken, writePlayerName, writePlayerToken } from '../state/player-profile'
 import { DiegeticHUD } from '../ui/DiegeticHUD'
+import { LeaderboardHud } from '../ui/LeaderboardHud'
 import { OffscreenPips } from '../ui/OffscreenPips'
+import { RespawnOverlay } from '../ui/RespawnOverlay'
+import { StartScreen, type StartScreenMode } from '../ui/StartScreen'
 import type { Contact, HudState } from '../ui/hud-math'
+import {
+  isRespawnReady,
+  respawnCountdownSec,
+  selectKillerCameraTarget,
+  shouldRecordScore,
+  type KillerCameraEntityLike,
+  type KillerCameraTarget,
+} from './m5-flow'
+
+export type GameMode = 'TRAINING' | 'MULTIPLAYER'
 
 const STAR_COUNT = 2000
 const STARFIELD_SPIN_RAD_PER_SEC = 0.006
@@ -26,6 +50,7 @@ const FREE_LOOK_MAX_YAW = 1.2
 const FREE_LOOK_MAX_PITCH = 0.8
 const MAX_HUD_CONTACTS = 16
 const COMMAND_BUFFER_SIZE = 6
+const PING_INTERVAL_SEC = 1.0
 
 function isMobileTouchDevice(): boolean {
   if (typeof navigator === 'undefined') return false
@@ -37,7 +62,24 @@ function isMobileTouchDevice(): boolean {
   return true
 }
 
-/** Bootstrap da cena Three.js: cena, câmera, renderer, loop e ciclo de vida. */
+function platformModeForRuntime(): PlatformMode {
+  return isMobileTouchDevice() ? 'ANDROID_FLAT' : 'PC'
+}
+
+function toWsUrl(locationLike: { protocol: string; host: string }): string {
+  const proto = locationLike.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${locationLike.host}/ws`
+}
+
+function defaultMultiplayerUrl(): string {
+  if (typeof window === 'undefined') return 'ws://localhost:3000/ws'
+  return toWsUrl(window.location)
+}
+
+export interface GameAppOptions {
+  multiplayerUrl?: string
+}
+
 export class GameApp {
   readonly scene: THREE.Scene
   readonly camera: THREE.PerspectiveCamera
@@ -72,23 +114,64 @@ export class GameApp {
   private shakeDuration = 0
   private shakeIntensity = 0
   private lastLocalShield = 100
-  private gameOver = false
-  private spectatorActive = false
-  private readonly spectatorTargetPos = new THREE.Vector3()
-  private readonly spectatorDesiredPos = new THREE.Vector3()
-  private readonly spectatorLookAt = new THREE.Vector3()
-  private readonly spectatorTmp = new THREE.Vector3()
-  private readonly gameOverOverlay: HTMLDivElement
 
-  private readonly transport: ITransport
+  private readonly transport: { current: ITransport | null } = { current: null }
   private unsubscribeTransport: (() => void) | null = null
+  private transportReady = false
   private localPlayerId: string | null = null
+  private localPlayerToken: string | null = null
   private commandTick = 1
   private readonly commandBuffer: ShipCommand[] = []
   private readonly commandBatchOut: ShipCommand[] = []
-  private transportReady = false
   private latestSnapshot: (ServerMessage & { t: 'SNAPSHOT' }) | null = null
   private appliedSnapshot: (ServerMessage & { t: 'SNAPSHOT' }) | null = null
+
+  private mode: GameMode | null = null
+  private sessionActive = false
+  private deathActive = false
+  private deathElapsedSec = 0
+  private deathDelaySec: number = WORLD_CONFIG.RESPAWN_DELAY_SEC
+  private killerTarget: KillerCameraTarget | null = null
+  private readonly killerEntities: KillerCameraEntityLike[] = []
+  private readonly spectatorTargetPos = new THREE.Vector3()
+  private readonly spectatorDesiredPos = new THREE.Vector3()
+  private readonly spectatorLookAt = new THREE.Vector3()
+  private readonly spectatorOrbitAxis = new THREE.Vector3(0, 1, 0)
+  private spectatorOrbitAngle = 0
+  private currentRunScore = 0
+  private currentRunWave = 1
+  private bestRecordedRank: number | null = null
+  private bestRecordedScore: number | null = null
+  private lastRecordedScoreForRun: number | null = null
+  private pendingQuitToMenu = false
+  private pingTimerSec = 0
+
+  private readonly clockSync = new ClockSync()
+  private readonly predictor = new Predictor()
+  private readonly interpolator = new Interpolator()
+  private predictedLocalShip: ShipState | null = null
+  private readonly displayLocalShip: ShipState = {
+    id: '',
+    name: '',
+    platform: 'PC',
+    pos: [0, 0, 0],
+    vel: [0, 0, 0],
+    rot: [0, 0, 0, 1],
+    angVel: [0, 0, 0],
+    shield: 100,
+    energy: 100,
+    score: 0,
+    alive: true,
+    invulnTimer: 0,
+    lastProcessedTick: 0,
+  }
+  private readonly interpShipState = { pos: [0, 0, 0] as [number, number, number], rot: [0, 0, 0, 1] as [number, number, number, number] }
+  private readonly remoteShipIds: Array<string | number> = []
+
+  private readonly startScreen: StartScreen
+  private readonly respawnOverlay: RespawnOverlay
+  private readonly leaderboardHud: LeaderboardHud
+  private readonly multiplayerUrl: string
 
   private readonly asteroidPool: AsteroidPool
   private readonly projectilePool: ProjectilePool
@@ -104,13 +187,13 @@ export class GameApp {
   private readonly audioListenerDirArr: [number, number, number] = [0, 0, -1]
   private readonly audioListenerUpArr: [number, number, number] = [0, 1, 0]
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, opts: GameAppOptions = {}) {
     this.container = container
+    this.multiplayerUrl = opts.multiplayerUrl ?? defaultMultiplayerUrl()
 
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(0x05070f)
 
-    // A câmera é fornecida pelo rig: PilotHeadRig controla apenas a cabeça (ADR-01).
     this.cockpit = new CockpitRig()
     this.camera = this.cockpit.camera
     this.scene.add(this.cockpit.root)
@@ -139,7 +222,6 @@ export class GameApp {
     }
     void this.syncInputForMode(this.pipeline.getMode())
 
-    // Iluminação mínima; brilho neste projeto vem de emissivos/Fresnel, não de bloom (ADR-04).
     this.scene.add(new THREE.AmbientLight(0x334466, 1))
     this.scene.add(new THREE.DirectionalLight(0xffffff, 0.35))
 
@@ -159,32 +241,41 @@ export class GameApp {
     this.hud = new DiegeticHUD(this.cockpit.hudMesh)
     this.pips = new OffscreenPips(this.cockpit.offscreenPips)
 
-    this.gameOverOverlay = document.createElement('div')
-    this.gameOverOverlay.style.position = 'fixed'
-    this.gameOverOverlay.style.inset = '0'
-    this.gameOverOverlay.style.display = 'none'
-    this.gameOverOverlay.style.alignItems = 'center'
-    this.gameOverOverlay.style.justifyContent = 'center'
-    this.gameOverOverlay.style.flexDirection = 'column'
-    this.gameOverOverlay.style.gap = '0.75rem'
-    this.gameOverOverlay.style.background = 'rgba(10, 2, 2, 0.45)'
-    this.gameOverOverlay.style.color = '#ffe6e6'
-    this.gameOverOverlay.style.fontFamily = 'monospace'
-    this.gameOverOverlay.style.zIndex = '2'
-    this.gameOverOverlay.style.pointerEvents = 'none'
-    this.gameOverOverlay.innerHTML =
-      '<div style="font-size:2rem;font-weight:700;letter-spacing:0.12em;color:#ff6b6b;text-shadow:0 0 18px rgba(255,80,80,0.55)">GAME OVER</div><div style="font-size:0.95rem;opacity:0.9">Sua nave foi destruída. Câmera em modo espectador — recarregue para jogar novamente.</div>'
-    this.container.append(this.gameOverOverlay)
-
     this.asteroidPool = new AsteroidPool(this.scene)
     this.projectilePool = new ProjectilePool(this.scene)
     this.enemyPool = new EnemyPool(this.scene)
     this.shipPool = new ShipPool(this.scene)
     this.particleSystem = new ParticleSystem(this.scene)
 
-    this.transport = new LocalTransport()
-    this.unsubscribeTransport = this.transport.onMessage((msg) => this.handleServerMessage(msg))
-    void this.connectTransport()
+    this.startScreen = new StartScreen({
+      onTrain: (name) => {
+        void this.beginSession('TRAINING', name)
+      },
+      onMultiplayer: (name) => {
+        void this.beginSession('MULTIPLAYER', name)
+      },
+      onModeChange: (mode) => {
+        this.refreshStartScreenLeaderboard(mode)
+      },
+    })
+    this.respawnOverlay = new RespawnOverlay({
+      onRespawn: () => this.requestRespawn(),
+      onQuit: () => this.quitToMenu(),
+    })
+    this.leaderboardHud = new LeaderboardHud()
+
+    this.startScreen.mount(this.container)
+    this.respawnOverlay.mount(this.container)
+    this.leaderboardHud.mount(this.container)
+    this.respawnOverlay.hide()
+    this.leaderboardHud.hide()
+
+    this.startScreen.update({
+      name: readPlayerName(),
+      mode: 'TRAINING',
+      entries: loadLocalLeaderboard().map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
+    })
+    this.startScreen.show()
 
     window.addEventListener('resize', this.handleResize)
     this.resize()
@@ -194,11 +285,9 @@ export class GameApp {
     if (this.disposed || this.running) return
     this.running = true
     this.clock.start()
-    // setAnimationLoop usa rAF no desktop e o requestAnimationFrame da sessão em WebXR.
     this.renderer.setAnimationLoop(this.tick)
   }
 
-  /** Seleção de modo (FLAT / VR_BOX / QUEST_3) — ver main.ts para a fonte da config. */
   async setRenderMode(mode: RenderMode): Promise<void> {
     await this.pipeline.setMode(mode)
     await this.syncInputForMode(this.pipeline.getMode())
@@ -208,7 +297,6 @@ export class GameApp {
     return this.pipeline.getMode()
   }
 
-  /** Ajuste dev de IPD via teclas; D-Pad/gamepad Quest fica para M3. */
   adjustIpd(deltaMm: number): void {
     this.pipeline.adjustIpd(deltaMm)
   }
@@ -225,12 +313,9 @@ export class GameApp {
     if (this.disposed) return
     this.disposed = true
     this.running = false
-    this.transportReady = false
     this.renderer.setAnimationLoop(null)
     window.removeEventListener('resize', this.handleResize)
-    this.unsubscribeTransport?.()
-    this.unsubscribeTransport = null
-    this.transport.close()
+    this.teardownTransport()
     this.inputManager.dispose()
     if (this.desktopInputAttached) {
       this.desktopInput.detach()
@@ -250,6 +335,9 @@ export class GameApp {
     }
     this.questXrInput.dispose()
     this.touchInput.dispose()
+    this.startScreen.unmount()
+    this.respawnOverlay.unmount()
+    this.leaderboardHud.unmount()
     this.pipeline.dispose()
     this.hud.dispose()
     this.pips.dispose()
@@ -265,7 +353,6 @@ export class GameApp {
     this.starfield.geometry.dispose()
     this.starfield.material.dispose()
     this.renderer.dispose()
-    this.gameOverOverlay.remove()
     this.renderer.domElement.remove()
   }
 
@@ -273,18 +360,20 @@ export class GameApp {
     this.resize()
   }
 
-  /** Chamado via requestAnimationFrame: sem `new`, arrays temporários ou closures por frame. */
   private readonly tick = (): void => {
     if (this.disposed) return
     const dt = this.clock.getDelta()
     this.starfield.rotation.y += dt * STARFIELD_SPIN_RAD_PER_SEC
     this.inputManager.update(dt)
+    if (this.mode === 'MULTIPLAYER') this.predictor.decayCorrection(dt)
+    this.updateNetworkTimers(dt)
     this.sendInputBatch()
     this.applySnapshotIfAny()
-    const starCenter = this.spectatorActive ? this.camera.position : this.cockpit.root.position
+    if (this.deathActive) this.updateDeath(dt)
+    const starCenter = this.deathActive ? this.camera.position : this.cockpit.root.position
     recenterStarfield(this.starfield, starCenter)
-    if (this.spectatorActive) {
-      this.updateSpectator(dt)
+    if (this.deathActive) {
+      this.updateDeathCamera(dt)
     } else {
       this.applyFreeLook()
       this.cockpit.update(dt)
@@ -297,48 +386,365 @@ export class GameApp {
     this.pipeline.render(this.scene, this.camera)
   }
 
-  getInputManager(): InputManager {
-    return this.inputManager
-  }
+  private async beginSession(mode: GameMode, rawName: string): Promise<void> {
+    if (this.disposed) return
+    const name = rawName.trim().slice(0, 32) || 'Pilot'
+    writePlayerName(name)
 
-  getVRBoxInput(): VRBoxInput {
-    return this.vrBoxInput
-  }
+    this.teardownTransport()
+    this.resetSessionState()
+    this.mode = mode
+    this.sessionActive = true
+    this.pendingQuitToMenu = false
+    this.localPlayerToken = readPlayerToken()
 
-  private async connectTransport(): Promise<void> {
+    this.startScreen.hide()
+    this.leaderboardHud.show()
+    this.respawnOverlay.hide()
+
+    if (mode === 'TRAINING') {
+      this.refreshLocalLeaderboardHud()
+    } else {
+      this.leaderboardHud.update({ title: 'Top 10 - Multiplayer', entries: [], current: null })
+    }
+
+    const transport = this.createTransport(mode)
+    this.transport.current = transport
+    this.unsubscribeTransport = transport.onMessage((msg) => this.handleServerMessage(msg))
+
     try {
-      await this.transport.connect()
-      if (this.disposed) return
-      const join: ClientMessage = { t: 'JOIN', roomId: 'solo', name: 'Player', platform: 'PC' }
-      this.transport.send(join)
+      await transport.connect()
+      if (this.disposed || this.transport.current !== transport) return
+      const join: ClientMessage = {
+        t: 'JOIN',
+        roomId: mode === 'TRAINING' ? 'training' : 'default',
+        name,
+        platform: platformModeForRuntime(),
+        ...(this.localPlayerToken ? { playerToken: this.localPlayerToken } : {}),
+      }
+      transport.send(join)
       this.transportReady = true
+      this.pingTimerSec = 0
     } catch (err) {
       console.warn('[game] transport connect failed', err)
+      if (this.transport.current === transport) {
+        this.returnToStartScreen()
+      }
     }
+  }
+
+  private createTransport(mode: GameMode): ITransport {
+    if (mode === 'TRAINING') return new LocalTransport()
+    return new WsTransport(this.multiplayerUrl, {
+      onClose: () => {
+        if (this.disposed) return
+        if (this.mode === 'MULTIPLAYER' && this.sessionActive) {
+          this.returnToStartScreen()
+        }
+      },
+      onError: (err) => {
+        console.warn('[game] multiplayer transport error', err)
+      },
+    })
+  }
+
+  private resetSessionState(): void {
+    this.transportReady = false
+    this.localPlayerId = null
+    this.commandTick = 1
+    this.commandBuffer.length = 0
+    this.commandBatchOut.length = 0
+    this.latestSnapshot = null
+    this.appliedSnapshot = null
+    this.deathActive = false
+    this.deathElapsedSec = 0
+    this.deathDelaySec = WORLD_CONFIG.RESPAWN_DELAY_SEC
+    this.killerTarget = null
+    this.currentRunScore = 0
+    this.currentRunWave = 1
+    this.bestRecordedRank = null
+    this.bestRecordedScore = null
+    this.lastRecordedScoreForRun = null
+    this.pendingQuitToMenu = false
+    this.pingTimerSec = 0
+    this.lastLocalShield = 100
+    this.shakeTimeRemaining = 0
+    this.shakeDuration = 0
+    this.shakeIntensity = 0
+    this.clockSync.reset()
+    this.predictor.reset()
+    this.interpolator.reset()
+    this.predictedLocalShip = null
+    this.hudContacts.length = 0
+    this.hudState.shield = 1
+    this.hudState.energy = 1
+    this.hudState.score = 0
+    this.hudState.wave = 1
+    this.restoreCockpitCamera()
+  }
+
+  private teardownTransport(): void {
+    this.transportReady = false
+    this.unsubscribeTransport?.()
+    this.unsubscribeTransport = null
+    const transport = this.transport.current
+    this.transport.current = null
+    try {
+      transport?.close()
+    } catch {
+      // ignore
+    }
+  }
+
+  private returnToStartScreen(): void {
+    this.teardownTransport()
+    this.resetSessionState()
+    this.sessionActive = false
+    const currentMode = this.mode ?? 'TRAINING'
+    this.mode = null
+    this.respawnOverlay.hide()
+    this.leaderboardHud.hide()
+    this.refreshStartScreenLeaderboard(currentMode)
+    this.startScreen.update({ name: readPlayerName(), mode: currentMode })
+    this.startScreen.show()
+  }
+
+  private refreshStartScreenLeaderboard(mode: StartScreenMode): void {
+    if (mode === 'TRAINING') {
+      const entries = loadLocalLeaderboard().map((e) => ({ rank: e.rank, name: e.name, score: e.score }))
+      this.startScreen.update({ mode, entries })
+      return
+    }
+    this.startScreen.update({ mode, entries: [] })
+  }
+
+  private refreshLocalLeaderboardHud(): void {
+    const entries = loadLocalLeaderboard()
+    this.applyLocalBest(entries)
+    this.leaderboardHud.update({
+      title: 'Top 10 - Treinamento',
+      entries: entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
+      current: {
+        rank: null,
+        name: readPlayerName() || 'Pilot',
+        score: this.currentRunScore,
+        bestRank: this.bestRecordedRank,
+        bestScore: this.bestRecordedScore,
+      },
+    })
+  }
+
+  private applyLocalBest(entries: RankedLocalLeaderboardEntry[]): void {
+    const best = entries[0]
+    if (best !== undefined) {
+      this.bestRecordedRank = best.rank
+      this.bestRecordedScore = best.score
+    } else {
+      this.bestRecordedRank = null
+      this.bestRecordedScore = null
+    }
+  }
+
+  private requestRespawn(): void {
+    if (!this.deathActive || !this.transportReady) return
+    if (!isRespawnReady(this.deathDelaySec, this.deathElapsedSec)) return
+    this.transport.current?.send({ t: 'RESPAWN_REQUEST' })
+  }
+
+  private quitToMenu(): void {
+    if (!this.sessionActive) {
+      this.returnToStartScreen()
+      return
+    }
+
+    if (this.mode === 'TRAINING' && shouldRecordScore(this.currentRunScore) && this.lastRecordedScoreForRun !== this.currentRunScore) {
+      const name = readPlayerName() || 'Pilot'
+      recordLocalScore({
+        name,
+        score: this.currentRunScore,
+        wave: this.currentRunWave,
+        createdAt: new Date().toISOString(),
+      })
+      this.lastRecordedScoreForRun = this.currentRunScore
+    }
+
+    if (this.transportReady) {
+      try {
+        this.transport.current?.send({ t: 'QUIT' })
+      } catch {
+        // ignore
+      }
+    }
+
+    this.pendingQuitToMenu = true
+    this.returnToStartScreen()
   }
 
   private handleServerMessage(msg: ServerMessage): void {
     if (this.disposed) return
     if (msg.t === 'WELCOME') {
       this.localPlayerId = msg.playerId
+      if (typeof msg.playerToken === 'string' && msg.playerToken.trim().length > 0) {
+        this.localPlayerToken = msg.playerToken.trim()
+        writePlayerToken(this.localPlayerToken)
+      }
+      return
+    }
+    if (msg.t === 'PONG') {
+      this.clockSync.handlePong(msg.clientTime, msg.serverTime)
       return
     }
     if (msg.t === 'SNAPSHOT') {
       this.latestSnapshot = msg
       return
     }
-    if (msg.t === 'EVENT') {
-      this.soundSynth.playEvent(msg)
-      if (msg.kind === 'EXPLOSION' || msg.kind === 'HIT' || msg.kind === 'PLAYER_DEATH') {
-        this.particleSystem.handleEvent(msg)
+    if (msg.t === 'LEADERBOARD') {
+      const current = msg.current
+      if (current) {
+        this.bestRecordedRank = current.rank
+        this.bestRecordedScore = current.score
       }
+      this.leaderboardHud.update({
+        title: this.mode === 'MULTIPLAYER' ? 'Top 10 - Multiplayer' : 'Top 10 - Treinamento',
+        entries: msg.entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
+        current: {
+          rank: current?.rank ?? null,
+          name: readPlayerName() || 'Pilot',
+          score: this.currentRunScore,
+          bestRank: this.bestRecordedRank,
+          bestScore: this.bestRecordedScore,
+        },
+      })
+      return
+    }
+    if (msg.t === 'EVENT') {
+      this.handleGameEvent(msg)
     }
   }
 
+  private handleGameEvent(msg: ServerMessage & { t: 'EVENT' }): void {
+    this.soundSynth.playEvent(msg)
+    if (msg.kind === 'EXPLOSION' || msg.kind === 'HIT' || msg.kind === 'PLAYER_DEATH') {
+      this.particleSystem.handleEvent(msg)
+    }
+
+    if (msg.kind === 'SCORE_RECORDED') {
+      if (msg.playerId === this.localPlayerId) {
+        this.lastRecordedScoreForRun = msg.score
+        if (typeof msg.rank === 'number') this.bestRecordedRank = msg.rank
+        if (msg.score > (this.bestRecordedScore ?? -1)) this.bestRecordedScore = msg.score
+        if (this.mode === 'TRAINING') {
+          const entries = recordLocalScore({
+            name: msg.name,
+            score: msg.score,
+            wave: msg.wave,
+            createdAt: new Date().toISOString(),
+          })
+          this.applyLocalBest(entries)
+          this.leaderboardHud.update({
+            entries: entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
+            current: {
+              rank: null,
+              name: readPlayerName() || msg.name,
+              score: this.currentRunScore,
+              bestRank: this.bestRecordedRank,
+              bestScore: this.bestRecordedScore,
+            },
+          })
+        } else {
+          this.leaderboardHud.update({
+            current: {
+              rank: null,
+              name: readPlayerName() || msg.name,
+              score: this.currentRunScore,
+              bestRank: this.bestRecordedRank,
+              bestScore: this.bestRecordedScore,
+            },
+          })
+        }
+      }
+      return
+    }
+
+    if (msg.kind === 'PLAYER_DEATH' && msg.playerId === this.localPlayerId) {
+      this.onLocalPlayerDeath(msg)
+    }
+  }
+
+  private onLocalPlayerDeath(msg: Extract<ServerMessage, { t: 'EVENT'; kind: 'PLAYER_DEATH' }>): void {
+    this.deathActive = true
+    this.deathElapsedSec = 0
+    this.deathDelaySec =
+      typeof msg.respawnDelaySec === 'number' && Number.isFinite(msg.respawnDelaySec) && msg.respawnDelaySec > 0
+        ? msg.respawnDelaySec
+        : WORLD_CONFIG.RESPAWN_DELAY_SEC
+    this.killerTarget = selectKillerCameraTarget(msg, this.buildKillerEntities())
+    this.spectatorOrbitAngle = 0
+    this.spectatorLookAt.set(msg.killerPos?.[0] ?? msg.pos[0], msg.killerPos?.[1] ?? msg.pos[1], msg.killerPos?.[2] ?? msg.pos[2])
+    this.enterDeathCamera()
+    this.respawnOverlay.update({
+      killerName: this.killerNameFromEvent(msg),
+      countdownSec: this.deathDelaySec,
+      canRespawn: false,
+      visible: true,
+    })
+  }
+
+  private killerNameFromEvent(msg: Extract<ServerMessage, { t: 'EVENT'; kind: 'PLAYER_DEATH' }>): string {
+    if (msg.killerKind === 'ASTEROID') return 'asteroide'
+    if (msg.killerKind === 'UNKNOWN') return ''
+    if (msg.killerKind === 'PLAYER') return 'outro piloto'
+    if (msg.killerKind === 'ENEMY') return 'inimigo'
+    return ''
+  }
+
+  private buildKillerEntities(): KillerCameraEntityLike[] {
+    const out = this.killerEntities
+    out.length = 0
+    const snap = this.latestSnapshot
+    if (!snap) return out
+    for (let i = 0; i < snap.enemies.length; i++) {
+      const e = snap.enemies[i]
+      if (e === undefined) continue
+      out.push({ id: e.id, kind: 'ENEMY', pos: e.pos, alive: e.hp > 0 })
+    }
+    for (let i = 0; i < snap.ships.length; i++) {
+      const s = snap.ships[i]
+      if (s === undefined) continue
+      if (s.id === this.localPlayerId) continue
+      out.push({ id: s.id, kind: 'PLAYER', pos: s.pos, alive: s.alive })
+    }
+    for (let i = 0; i < snap.asteroids.length; i++) {
+      const a = snap.asteroids[i]
+      if (a === undefined) continue
+      out.push({ id: a.id, kind: 'ASTEROID', pos: a.pos, alive: a.hp > 0 })
+    }
+    return out
+  }
+
+  private updateDeath(dt: number): void {
+    this.deathElapsedSec += dt
+    const remaining = respawnCountdownSec(this.deathDelaySec, this.deathElapsedSec)
+    const ready = isRespawnReady(this.deathDelaySec, this.deathElapsedSec)
+    this.respawnOverlay.update({ countdownSec: remaining, canRespawn: ready })
+  }
+
+  private updateNetworkTimers(dt: number): void {
+    if (!this.transportReady || this.mode !== 'MULTIPLAYER') return
+    this.pingTimerSec += dt
+    if (this.pingTimerSec < PING_INTERVAL_SEC) return
+    this.pingTimerSec = 0
+    this.transport.current?.send({ t: 'PING', clientTime: performance.now() })
+  }
+
   private sendInputBatch(): void {
-    // Send commands with redundancy; GameRoom ignores old ticks.
+    if (!this.sessionActive) return
     const cmd = this.inputManager.getCommand(this.commandTick)
     this.commandTick += 1
+
+    if (this.mode === 'MULTIPLAYER' && this.predictedLocalShip && this.predictedLocalShip.alive) {
+      this.predictor.predict(this.predictedLocalShip, cmd)
+    }
 
     this.commandBuffer.push(cmd)
     if (this.commandBuffer.length > COMMAND_BUFFER_SIZE) {
@@ -350,8 +756,7 @@ export class GameApp {
     for (let i = 0; i < this.commandBuffer.length; i++) {
       this.commandBatchOut[i] = this.commandBuffer[i]!
     }
-    const batch: ClientMessage = { t: 'INPUT_BATCH', cmds: this.commandBatchOut }
-    this.transport.send(batch)
+    this.transport.current?.send({ t: 'INPUT_BATCH', cmds: this.commandBatchOut })
   }
 
   private applySnapshotIfAny(): void {
@@ -362,8 +767,50 @@ export class GameApp {
     this.asteroidPool.update(snap.asteroids)
     this.projectilePool.update(snap.projectiles)
     this.enemyPool.update(snap.enemies)
-    this.shipPool.update(snap.ships, this.localPlayerId)
+    this.updateRemoteInterpolation(snap)
+    const shipsForRender = this.getShipsForRender(snap)
+    this.shipPool.update(shipsForRender, this.localPlayerId)
     this.updateHudFromSnapshot(snap)
+  }
+
+  private updateRemoteInterpolation(snap: ServerMessage & { t: 'SNAPSHOT' }): void {
+    if (this.mode !== 'MULTIPLAYER') return
+    const entities: { id: string | number; pos: [number, number, number]; rot: [number, number, number, number] }[] = []
+    for (let i = 0; i < snap.ships.length; i++) {
+      const s = snap.ships[i]
+      if (s === undefined) continue
+      if (this.localPlayerId !== null && s.id === this.localPlayerId) continue
+      entities.push({ id: s.id, pos: s.pos, rot: s.rot })
+    }
+    this.interpolator.push(snap.serverTime, entities)
+  }
+
+  private getShipsForRender(snap: ServerMessage & { t: 'SNAPSHOT' }): readonly ShipState[] {
+    if (this.mode !== 'MULTIPLAYER') return snap.ships
+    const renderTime = this.clockSync.serverNow()
+    let changed = false
+    let out: ShipState[] | null = null
+    for (let i = 0; i < snap.ships.length; i++) {
+      const s = snap.ships[i]
+      if (s === undefined) continue
+      if (this.localPlayerId !== null && s.id === this.localPlayerId) continue
+      if (this.interpolator.sampleInto(s.id, renderTime, this.interpShipState)) {
+        if (!changed) {
+          out = snap.ships.slice()
+          changed = true
+        }
+        const copy = this.cloneShipState(s)
+        copy.pos[0] = this.interpShipState.pos[0]
+        copy.pos[1] = this.interpShipState.pos[1]
+        copy.pos[2] = this.interpShipState.pos[2]
+        copy.rot[0] = this.interpShipState.rot[0]
+        copy.rot[1] = this.interpShipState.rot[1]
+        copy.rot[2] = this.interpShipState.rot[2]
+        copy.rot[3] = this.interpShipState.rot[3]
+        out![i] = copy
+      }
+    }
+    return changed && out !== null ? out : snap.ships
   }
 
   private updateHudFromSnapshot(snap: ServerMessage & { t: 'SNAPSHOT' }): void {
@@ -379,34 +826,101 @@ export class GameApp {
     }
 
     if (local !== undefined) {
-      this.cockpit.root.position.set(local.pos[0], local.pos[1], local.pos[2])
-      this.cockpit.root.quaternion.set(local.rot[0], local.rot[1], local.rot[2], local.rot[3])
+      this.currentRunScore = local.score
+      this.currentRunWave = snap.wave
 
-      const nextShield = Math.max(0, local.shield)
-      if (nextShield < this.lastLocalShield - 0.01) {
-        const damage = this.lastLocalShield - nextShield
-        const intensity = Math.min(0.35, 0.04 + damage / 140)
-        this.triggerCameraShake(intensity, 0.22)
-        this.soundSynth.playEvent({
-          kind: 'HIT',
-          pos: this.audioListenerPosArr,
-          scale: Math.max(0.8, Math.min(2.5, damage / 20)),
-        })
+      if (this.mode === 'MULTIPLAYER') {
+        if (!this.predictedLocalShip) {
+          this.predictedLocalShip = this.cloneShipState(local)
+        } else {
+          this.predictor.reconcile(this.predictedLocalShip, local)
+        }
+      } else {
+        this.predictedLocalShip = null
       }
-      this.lastLocalShield = nextShield
+
+      if (local.alive) {
+        if (this.deathActive) this.onLocalRespawned()
+        const display = this.getLocalDisplayShip(local)
+        this.cockpit.root.position.set(display.pos[0], display.pos[1], display.pos[2])
+        this.cockpit.root.quaternion.set(display.rot[0], display.rot[1], display.rot[2], display.rot[3])
+
+        const nextShield = Math.max(0, local.shield)
+        if (nextShield < this.lastLocalShield - 0.01) {
+          const damage = this.lastLocalShield - nextShield
+          const intensity = Math.min(0.35, 0.04 + damage / 140)
+          this.triggerCameraShake(intensity, 0.22)
+          this.soundSynth.playEvent({
+            kind: 'HIT',
+            pos: this.audioListenerPosArr,
+            scale: Math.max(0.8, Math.min(2.5, damage / 20)),
+          })
+        }
+        this.lastLocalShield = nextShield
+      } else {
+        this.lastLocalShield = Math.max(0, local.shield)
+      }
+
       this.hudState.shield = Math.max(0, local.shield / 100)
       this.hudState.energy = Math.max(0, local.energy / 100)
       this.hudState.score = local.score
     }
     this.hudState.wave = snap.wave
 
-    const wasGameOver = this.gameOver
-    this.gameOver = snap.gameOver === true || (local !== undefined && local.alive === false)
-    if (this.gameOver && !wasGameOver) {
-      this.onGameOver()
-    }
-
     this.updateContacts(snap)
+    this.refreshLeaderboardHudCurrent()
+  }
+
+  private cloneShipState(src: ShipState): ShipState {
+    return {
+      id: src.id,
+      name: src.name,
+      platform: src.platform,
+      pos: [src.pos[0], src.pos[1], src.pos[2]],
+      vel: [src.vel[0], src.vel[1], src.vel[2]],
+      rot: [src.rot[0], src.rot[1], src.rot[2], src.rot[3]],
+      angVel: [src.angVel[0], src.angVel[1], src.angVel[2]],
+      shield: src.shield,
+      energy: src.energy,
+      score: src.score,
+      alive: src.alive,
+      invulnTimer: src.invulnTimer,
+      lastProcessedTick: src.lastProcessedTick,
+    }
+  }
+
+  private getLocalDisplayShip(authoritative: ShipState): ShipState {
+    if (this.mode !== 'MULTIPLAYER' || !this.predictedLocalShip) return authoritative
+    this.predictor.decayCorrection(0)
+    this.predictor.getDisplayState(this.predictedLocalShip, this.displayLocalShip)
+    // Keep authoritative non-physics HUD/identity fields.
+    this.displayLocalShip.shield = authoritative.shield
+    this.displayLocalShip.energy = authoritative.energy
+    this.displayLocalShip.score = authoritative.score
+    this.displayLocalShip.alive = authoritative.alive
+    this.displayLocalShip.invulnTimer = authoritative.invulnTimer
+    return this.displayLocalShip
+  }
+
+  private refreshLeaderboardHudCurrent(): void {
+    this.leaderboardHud.update({
+      current: {
+        rank: null,
+        name: readPlayerName() || 'Pilot',
+        score: this.currentRunScore,
+        bestRank: this.bestRecordedRank,
+        bestScore: this.bestRecordedScore,
+      },
+    })
+  }
+
+  private onLocalRespawned(): void {
+    this.deathActive = false
+    this.deathElapsedSec = 0
+    this.killerTarget = null
+    this.lastRecordedScoreForRun = null
+    this.respawnOverlay.hide()
+    this.restoreCockpitCamera()
   }
 
   private updateContacts(snap: ServerMessage & { t: 'SNAPSHOT' }): void {
@@ -437,7 +951,6 @@ export class GameApp {
       count++
     }
 
-    // Also include other ships as contacts (rare in solo, cheap to support).
     for (let i = 0; i < snap.ships.length && count < max; i++) {
       const s = snap.ships[i]
       if (s === undefined) continue
@@ -454,6 +967,98 @@ export class GameApp {
     this.hudContacts.length = count
   }
 
+  private enterDeathCamera(): void {
+    if (this.disposed) return
+    if (this.camera.parent !== this.scene) {
+      this.scene.attach(this.camera)
+    }
+    this.cockpit.root.visible = false
+    this.camera.position.set(
+      this.spectatorLookAt.x,
+      this.spectatorLookAt.y + 10,
+      this.spectatorLookAt.z + 24,
+    )
+    this.camera.lookAt(this.spectatorLookAt)
+  }
+
+  private restoreCockpitCamera(): void {
+    if (this.disposed) return
+    this.cockpit.root.visible = true
+    if (this.camera.parent !== this.cockpit.pilotHeadRig) {
+      this.cockpit.pilotHeadRig.attach(this.camera)
+    }
+    this.camera.position.set(0, 0, 0)
+    this.camera.quaternion.identity()
+    this.camera.rotation.set(0, 0, 0)
+  }
+
+  private updateDeathCamera(dt: number): void {
+    const target = this.resolveKillerTargetPos()
+    const lerpLook = 1 - Math.exp(-dt * 2.5)
+    this.spectatorLookAt.lerp(target, lerpLook)
+
+    if (this.killerTarget?.kind === 'point') {
+      this.spectatorOrbitAngle += dt * 0.35
+      const radius = 24
+      this.spectatorDesiredPos.set(
+        this.spectatorLookAt.x + Math.cos(this.spectatorOrbitAngle) * radius,
+        this.spectatorLookAt.y + 10,
+        this.spectatorLookAt.z + Math.sin(this.spectatorOrbitAngle) * radius,
+      )
+      this.camera.position.lerp(this.spectatorDesiredPos, 1 - Math.exp(-dt * 1.2))
+    } else {
+      this.spectatorDesiredPos.set(
+        this.spectatorLookAt.x,
+        this.spectatorLookAt.y + 10,
+        this.spectatorLookAt.z + 24,
+      )
+      this.camera.position.lerp(this.spectatorDesiredPos, 1 - Math.exp(-dt * 1.8))
+    }
+    this.camera.lookAt(this.spectatorLookAt)
+  }
+
+  private resolveKillerTargetPos(): THREE.Vector3 {
+    const snap = this.latestSnapshot
+    const target = this.killerTarget
+    if (target?.kind === 'entity' && snap !== null) {
+      if (target.entityKind === 'ENEMY') {
+        for (let i = 0; i < snap.enemies.length; i++) {
+          const e = snap.enemies[i]
+          if (e !== undefined && e.id === target.id && e.hp > 0) {
+            this.spectatorTargetPos.set(e.pos[0], e.pos[1], e.pos[2])
+            return this.spectatorTargetPos
+          }
+        }
+      } else if (target.entityKind === 'PLAYER') {
+        for (let i = 0; i < snap.ships.length; i++) {
+          const s = snap.ships[i]
+          if (s !== undefined && s.id === target.id && s.alive) {
+            this.spectatorTargetPos.set(s.pos[0], s.pos[1], s.pos[2])
+            return this.spectatorTargetPos
+          }
+        }
+      } else if (target.entityKind === 'ASTEROID') {
+        for (let i = 0; i < snap.asteroids.length; i++) {
+          const a = snap.asteroids[i]
+          if (a !== undefined && a.id === target.id && a.hp > 0) {
+            this.spectatorTargetPos.set(a.pos[0], a.pos[1], a.pos[2])
+            return this.spectatorTargetPos
+          }
+        }
+      }
+      // entity died/disappeared: fall back to last known lookAt (impact-like point)
+      this.killerTarget = { kind: 'point', pos: [this.spectatorLookAt.x, this.spectatorLookAt.y, this.spectatorLookAt.z] }
+    }
+
+    if (this.killerTarget?.kind === 'point') {
+      this.spectatorTargetPos.set(this.killerTarget.pos[0], this.killerTarget.pos[1], this.killerTarget.pos[2])
+      return this.spectatorTargetPos
+    }
+
+    this.spectatorTargetPos.copy(this.spectatorLookAt)
+    return this.spectatorTargetPos
+  }
+
   private async syncInputForMode(mode: RenderMode): Promise<void> {
     const token = ++this.inputSyncToken
     const isCurrent = (): boolean =>
@@ -463,7 +1068,6 @@ export class GameApp {
     const shouldAttachVRBox = mode === 'VR_BOX' && !this.disposed
     const shouldAttachQuestXr = mode === 'QUEST_3' && !this.disposed
 
-    // Sync flat inputs (synchronous attach/detach).
     if (this.useTouchInput) {
       if (shouldAttachFlat && !this.touchInputAttached) {
         this.touchInput.attach(this.renderer.domElement)
@@ -488,7 +1092,6 @@ export class GameApp {
 
     if (!isCurrent()) return
 
-    // Detach adapters that do not belong to the target mode before any early return.
     if (!shouldAttachQuestXr && this.questXrSessionAttached) {
       this.questXrInput.detach()
       this.questXrSessionAttached = false
@@ -507,7 +1110,6 @@ export class GameApp {
 
     if (!isCurrent()) return
 
-    // Attach VR Box input when entering VR_BOX.
     if (shouldAttachVRBox && !this.vrBoxInputAttached) {
       this.inputManager.setAdapter(this.vrBoxInput)
       try {
@@ -516,7 +1118,6 @@ export class GameApp {
         // Degraded mode: status exposed by VRBoxInput; continue.
       }
       if (!isCurrent()) {
-        // A newer sync won; ensure we don't leave VRBox attached behind.
         try {
           await this.vrBoxInput.detach()
         } catch {
@@ -623,8 +1224,7 @@ export class GameApp {
   }
 
   private triggerCameraShake(intensity: number, duration: number): void {
-    if (this.gameOver) {
-      // Allow a stronger final shake, but keep it bounded.
+    if (this.deathActive) {
       this.shakeIntensity = Math.max(this.shakeIntensity, Math.min(0.5, intensity))
       this.shakeDuration = Math.max(this.shakeDuration, duration)
       this.shakeTimeRemaining = Math.max(this.shakeTimeRemaining, duration)
@@ -644,93 +1244,12 @@ export class GameApp {
     this.shakeTimeRemaining = Math.max(0, this.shakeTimeRemaining - dt)
     const t = this.shakeDuration > 0 ? this.shakeTimeRemaining / this.shakeDuration : 0
     const amp = this.shakeIntensity * t
-    // Cheap deterministic-ish noise using time; not simulation-critical.
     const n = performance.now() * 0.001
     this.camera.position.set(
       Math.sin(n * 43.7) * amp,
       Math.cos(n * 37.3) * amp * 0.6,
       0,
     )
-  }
-
-  private onGameOver(): void {
-    this.triggerCameraShake(0.45, 0.5)
-    this.gameOverOverlay.style.display = 'flex'
-    this.enterSpectatorMode()
-  }
-
-  private enterSpectatorMode(): void {
-    if (this.spectatorActive || this.disposed) return
-    this.spectatorActive = true
-    this.spectatorTargetPos.copy(this.cockpit.root.position)
-    this.spectatorLookAt.copy(this.spectatorTargetPos)
-    // Move camera to scene so it can follow targets independently of the hidden cockpit.
-    this.scene.attach(this.camera)
-    this.cockpit.root.visible = false
-    this.camera.position.set(
-      this.spectatorTargetPos.x,
-      this.spectatorTargetPos.y + 12,
-      this.spectatorTargetPos.z + 30,
-    )
-    this.camera.lookAt(this.spectatorTargetPos)
-  }
-
-  private updateSpectator(dt: number): void {
-    const snap = this.latestSnapshot
-    let found = false
-    let bestD2 = Number.POSITIVE_INFINITY
-
-    if (snap !== null) {
-      for (let i = 0; i < snap.enemies.length; i++) {
-        const e = snap.enemies[i]
-        if (e === undefined) continue
-        const dx = e.pos[0] - this.spectatorLookAt.x
-        const dy = e.pos[1] - this.spectatorLookAt.y
-        const dz = e.pos[2] - this.spectatorLookAt.z
-        const d2 = dx * dx + dy * dy + dz * dz
-        if (d2 < bestD2) {
-          bestD2 = d2
-          this.spectatorTargetPos.set(e.pos[0], e.pos[1], e.pos[2])
-          found = true
-        }
-      }
-      if (!found) {
-        for (let i = 0; i < snap.asteroids.length; i++) {
-          const a = snap.asteroids[i]
-          if (a === undefined) continue
-          const dx = a.pos[0] - this.spectatorLookAt.x
-          const dy = a.pos[1] - this.spectatorLookAt.y
-          const dz = a.pos[2] - this.spectatorLookAt.z
-          const d2 = dx * dx + dy * dy + dz * dz
-          if (d2 < bestD2) {
-            bestD2 = d2
-            this.spectatorTargetPos.set(a.pos[0], a.pos[1], a.pos[2])
-            found = true
-          }
-        }
-      }
-    }
-
-    if (!found) {
-      // Slow orbit around last known point if nothing to follow.
-      const t = performance.now() * 0.00025
-      this.spectatorTargetPos.set(
-        this.spectatorLookAt.x + Math.cos(t) * 0.01,
-        this.spectatorLookAt.y,
-        this.spectatorLookAt.z + Math.sin(t) * 0.01,
-      )
-    }
-
-    const lerp = 1 - Math.exp(-dt * 2.5)
-    this.spectatorLookAt.lerp(this.spectatorTargetPos, lerp)
-
-    this.spectatorDesiredPos.set(
-      this.spectatorLookAt.x,
-      this.spectatorLookAt.y + 10,
-      this.spectatorLookAt.z + 24,
-    )
-    this.camera.position.lerp(this.spectatorDesiredPos, 1 - Math.exp(-dt * 1.8))
-    this.camera.lookAt(this.spectatorLookAt)
   }
 
   private resize(): void {

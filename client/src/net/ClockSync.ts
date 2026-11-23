@@ -54,4 +54,11 @@ export class ClockSync {
   getRtt(): number {
     return this.bestRtt
   }
+
+  /** Clear all samples. */
+  reset(): void {
+    this.offset = 0
+    this.bestRtt = Number.POSITIVE_INFINITY
+    this.hasSample = false
+  }
 }
