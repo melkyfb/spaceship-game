@@ -73,7 +73,7 @@ export class GameApp {
   private localPlayerId: string | null = null
   private commandTick = 1
   private readonly commandBuffer: ShipCommand[] = []
-  private readonly inputBatchMsg: { t: 'INPUT_BATCH'; cmds: ShipCommand[] } = { t: 'INPUT_BATCH', cmds: [] }
+  private transportReady = false
   private latestSnapshot: (ServerMessage & { t: 'SNAPSHOT' }) | null = null
   private appliedSnapshot: (ServerMessage & { t: 'SNAPSHOT' }) | null = null
 
@@ -183,6 +183,7 @@ export class GameApp {
     if (this.disposed) return
     this.disposed = true
     this.running = false
+    this.transportReady = false
     this.renderer.setAnimationLoop(null)
     window.removeEventListener('resize', this.handleResize)
     this.unsubscribeTransport?.()
@@ -258,6 +259,7 @@ export class GameApp {
       if (this.disposed) return
       const join: ClientMessage = { t: 'JOIN', roomId: 'solo', name: 'Player', platform: 'PC' }
       this.transport.send(join)
+      this.transportReady = true
     } catch (err) {
       console.warn('[game] transport connect failed', err)
     }
@@ -290,8 +292,9 @@ export class GameApp {
       this.commandBuffer.shift()
     }
 
-    this.inputBatchMsg.cmds = this.commandBuffer
-    this.transport.send(this.inputBatchMsg)
+    if (!this.transportReady || this.disposed) return
+    const batch: ClientMessage = { t: 'INPUT_BATCH', cmds: this.commandBuffer.slice() }
+    this.transport.send(batch)
   }
 
   private applySnapshotIfAny(): void {

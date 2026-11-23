@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { ENEMY_ARCHETYPES, type EnemyArchetype, type EnemyState } from '@asteroids/shared'
+import type { EnemyArchetype, EnemyState } from '@asteroids/shared'
 
 export const ENEMY_CAPACITY_PER_ARCHETYPE = 32
 

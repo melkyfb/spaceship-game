@@ -30,6 +30,7 @@ export class ParticleSystem {
   private readonly scratchScale = new THREE.Vector3()
   private readonly hiddenScale = new THREE.Vector3(0, 0, 0)
   private spawnCursor = 0
+  private dirty = false
 
   constructor(scene: THREE.Scene, capacity = PARTICLE_CAPACITY) {
     this.group = new THREE.Group()
@@ -128,6 +129,7 @@ export class ParticleSystem {
       p.life = life
       p.size = size
       this.spawnCursor = (idx + 1) % capacity
+      this.dirty = true
       return
     }
     // Pool exhausted: overwrite oldest cursor.
@@ -144,19 +146,19 @@ export class ParticleSystem {
     p.life = life
     p.size = size
     this.spawnCursor = (this.spawnCursor + 1) % capacity
+    this.dirty = true
   }
 
   update(dt: number): void {
     if (dt <= 0) return
     this.scratchQuat.identity()
-    let anyActive = false
+    let dirty = this.dirty
+    this.dirty = false
 
     for (let i = 0; i < this.particles.length; i++) {
       const p = this.particles[i]
       if (p === undefined) continue
       if (!p.active) {
-        this.scratchMatrix.compose(this.scratchPos.set(0, 0, 0), this.scratchQuat, this.hiddenScale)
-        this.mesh.setMatrixAt(i, this.scratchMatrix)
         continue
       }
 
@@ -165,10 +167,10 @@ export class ParticleSystem {
         p.active = false
         this.scratchMatrix.compose(this.scratchPos.set(0, 0, 0), this.scratchQuat, this.hiddenScale)
         this.mesh.setMatrixAt(i, this.scratchMatrix)
+        dirty = true
         continue
       }
 
-      anyActive = true
       p.x += p.vx * dt
       p.y += p.vy * dt
       p.z += p.vz * dt
@@ -184,9 +186,10 @@ export class ParticleSystem {
       this.scratchScale.setScalar(Math.max(0, s))
       this.scratchMatrix.compose(this.scratchPos, this.scratchQuat, this.scratchScale)
       this.mesh.setMatrixAt(i, this.scratchMatrix)
+      dirty = true
     }
 
-    if (anyActive || this.mesh.instanceMatrix.version >= 0) {
+    if (dirty) {
       this.mesh.instanceMatrix.needsUpdate = true
     }
   }
