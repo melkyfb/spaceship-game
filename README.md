@@ -383,6 +383,18 @@ Não fabricar validação de dispositivo/latência.
 
 Fonte autoritativa: `docs/superpowers/specs/2026-11-23-m5-multiplayer-authoritative-verification.md`.
 
+## Assets 3D (P1)
+
+Pipeline P1 para integrar GLBs reais com fallback procedural (sem quebrar sim/determinismo).
+
+- **Raw/source local:** `assets/` (não commitado por padrão; decidir política antes de adicionar binários grandes/raw).
+- **Runtime:** `client/public/assets/models/` (`ships/`, `asteroids/`, `pickups/`, `projectiles/`).
+- **Export (dry-run):** `node scripts/assets/export-glb.mjs --dry-run`
+- **Export real:** requer Blender no PATH; o script usa `scripts/assets/blender_export.py` e `scripts/assets/sources.p1.json`. Quando Blender ausente ou nodeFilter não casa, o script deve falhar/reportar claramente; export manual/fallback documentado.
+- **Fallback:** se GLB ausente/falhar no load, o cliente usa geometria procedural existente (não crashar).
+- **Estado atual (factual):** `player_ship.glb` e `missile.glb` presentes; `crystal_shield`/`crystal_energy` pendentes por nodeFilter mismatch no FBX; asteroids P1 ainda não mapeados/exportados no `sources.p1.json`.
+- **Verificação:** `docs/superpowers/specs/2026-11-23-assets-phase2-p1-verification.md` (checklist manual PENDENTE; não afirmar validação visual/dispositivo sem execução).
+
 ## Estrutura atual
 
 ```
@@ -405,10 +417,12 @@ shared/
 client/
   index.html       # página de entrada (#app)
   vite.config.ts   # HTTPS (mkcert), 0.0.0.0:5173 / preview 4173 + proxy /ws em ambos
+  public/assets/models/  # GLBs runtime P1 (ships/asteroids/pickups/projectiles)
   src/
     main.ts        # bootstrap GameApp + ?render= + hooks dev + gesto de áudio
     ws-status.ts   # buildWsUrl() — URL WS na mesma origem (wss para https)
     style.css
+    assets/              # AssetLoader, manifest, preload/cache/fallback GLB
     core/
       GameApp.ts         # Scene/renderer, loop, input, transport, modos M5, respawn/death cam
       m5-flow.ts         # helpers puros M5 (respawn timer, killer camera target, score record)
