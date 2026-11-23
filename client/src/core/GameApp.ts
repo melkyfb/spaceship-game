@@ -11,6 +11,7 @@ import { normalizeObjectToRadius } from '../assets/model-utils'
 import { AsteroidPool } from '../entities/AsteroidPool'
 import { EnemyPool } from '../entities/EnemyShip'
 import { ParticleSystem } from '../entities/ParticleSystem'
+import { PickupPool } from '../entities/PickupPool'
 import { ProjectilePool } from '../entities/ProjectilePool'
 import { ShipPool } from '../entities/ShipPool'
 import { DesktopInput } from '../input/DesktopInput'
@@ -178,6 +179,7 @@ export class GameApp {
   private readonly projectilePool: ProjectilePool
   private readonly enemyPool: EnemyPool
   private readonly shipPool: ShipPool
+  private readonly pickupPool: PickupPool
   private readonly particleSystem: ParticleSystem
   private readonly soundSynth = new SoundSynth()
   private readonly audioListenerPos = new THREE.Vector3()
@@ -246,6 +248,7 @@ export class GameApp {
     this.projectilePool = new ProjectilePool(this.scene)
     this.enemyPool = new EnemyPool(this.scene)
     this.shipPool = new ShipPool(this.scene)
+    this.pickupPool = new PickupPool(this.scene)
     this.particleSystem = new ParticleSystem(this.scene)
     void this.preloadShipTemplate()
 
@@ -347,6 +350,7 @@ export class GameApp {
     this.projectilePool.dispose()
     this.enemyPool.dispose()
     this.shipPool.dispose()
+    this.pickupPool.dispose()
     this.particleSystem.dispose()
     this.soundSynth.dispose()
     this.scene.remove(this.cockpit.root)
@@ -370,7 +374,7 @@ export class GameApp {
     if (this.mode === 'MULTIPLAYER') this.predictor.decayCorrection(dt)
     this.updateNetworkTimers(dt)
     this.sendInputBatch()
-    this.applySnapshotIfAny()
+    this.applySnapshotIfAny(dt)
     this.updateMultiplayerRenderFrame()
     if (this.deathActive) this.updateDeath(dt)
     const starCenter = this.deathActive ? this.camera.position : this.cockpit.root.position
@@ -770,7 +774,7 @@ export class GameApp {
     this.transport.current?.send({ t: 'INPUT_BATCH', cmds: this.commandBatchOut })
   }
 
-  private applySnapshotIfAny(): void {
+  private applySnapshotIfAny(dt: number): void {
     const snap = this.latestSnapshot
     if (snap === null || snap === this.appliedSnapshot) return
     this.appliedSnapshot = snap
@@ -778,6 +782,7 @@ export class GameApp {
     this.asteroidPool.update(snap.asteroids)
     this.projectilePool.update(snap.projectiles)
     this.enemyPool.update(snap.enemies)
+    this.pickupPool.update(snap.pickups, dt)
     this.updateRemoteInterpolation(snap)
     const shipsForRender = this.getShipsForRender(snap)
     this.shipPool.update(shipsForRender, this.localPlayerId)
