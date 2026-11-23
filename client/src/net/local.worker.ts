@@ -14,6 +14,8 @@ const ctx = self as unknown as WorkerCtx
 
 let room: GameRoom | null = null
 let intervalId: ReturnType<typeof setInterval> | null = null
+let tick = 0
+let playerId = 'p1'
 
 function post(msg: WorkerOutMessage): void {
   ctx.postMessage(msg)
@@ -28,13 +30,16 @@ function stopLoop(): void {
 
 function start(): void {
   if (room) return
-  room = new GameRoom({ seed: 1, playerId: 'p1', playerName: 'Player', platform: 'PC' })
+  tick = 0
+  playerId = 'p1'
+  room = new GameRoom({ seed: 1, playerId, playerName: 'Player', platform: 'PC' })
   post({ t: 'READY' })
 
   const stepMs = FIXED_DT * 1000
   intervalId = setInterval(() => {
     if (!room) return
     room.stepFixed()
+    tick += 1
 
     if (room.shouldEmitSnapshot()) {
       post(room.createSnapshot())
@@ -58,17 +63,17 @@ function handleClientMessage(msg: ClientMessage): void {
     case 'JOIN':
       post({
         t: 'WELCOME',
-        playerId: 'p1',
+        playerId,
         roomId: msg.roomId,
-        serverTick: 0,
-        serverTime: 0,
+        serverTick: tick,
+        serverTime: tick * FIXED_DT,
       })
       return
     case 'PING':
       post({
         t: 'PONG',
         clientTime: msg.clientTime,
-        serverTime: 0,
+        serverTime: tick * FIXED_DT,
       })
       return
   }

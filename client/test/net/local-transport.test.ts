@@ -152,4 +152,48 @@ describe('LocalTransport', () => {
       }),
     ).not.toThrow()
   })
+
+  it('rejects connect when closed before READY', async () => {
+    const transport = new LocalTransport()
+    const connectPromise = transport.connect()
+    const worker = MockWorker.instances[0]!
+    expect(worker.terminated).toBe(false)
+
+    transport.close()
+
+    await expect(connectPromise).rejects.toThrow('Transport closed during connect')
+    expect(worker.terminated).toBe(true)
+  })
+
+  it('rejects connect after close', async () => {
+    const transport = new LocalTransport()
+    const p = transport.connect()
+    MockWorker.instances[0]!.emit({ t: 'READY' })
+    await p
+    transport.close()
+
+    await expect(transport.connect()).rejects.toThrow('Transport is closed')
+  })
+
+  it('close is idempotent and does not post messages after close', async () => {
+    const transport = new LocalTransport()
+    const p = transport.connect()
+    const worker = MockWorker.instances[0]!
+    worker.emit({ t: 'READY' })
+    await p
+
+    transport.send({ t: 'INPUT_BATCH', cmds: [] })
+    const postsBeforeClose = worker.posted.length
+
+    transport.close()
+    transport.close()
+
+    expect(worker.terminated).toBe(true)
+    // No additional postMessage calls after close (STOP was sent once during close).
+    expect(worker.posted.length).toBe(postsBeforeClose + 1)
+    expect(worker.posted[worker.posted.length - 1]).toEqual({ t: 'STOP' })
+
+    transport.send({ t: 'INPUT_BATCH', cmds: [] })
+    expect(worker.posted.length).toBe(postsBeforeClose + 1)
+  })
 })
