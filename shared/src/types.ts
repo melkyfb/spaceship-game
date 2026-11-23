@@ -3,6 +3,7 @@
 export type PlatformMode = 'PC' | 'ANDROID_FLAT' | 'VR_BOX' | 'QUEST_3';
 export type AsteroidSize = 'LARGE' | 'MEDIUM' | 'SMALL';
 export type EnemyArchetype = 'SCOUT' | 'BRUISER' | 'SCAVENGER';
+export type KillerKind = 'ENEMY' | 'PLAYER' | 'ASTEROID' | 'UNKNOWN';
 
 export interface ShipCommand {
   tick: number;
@@ -73,13 +74,72 @@ export interface PickupState {
   ttl: number;
 }
 
+export interface LeaderboardEntry {
+  rank: number;
+  name: string;
+  score: number;
+}
+
+export const CLIENT_MESSAGE_TYPES = [
+  'JOIN',
+  'INPUT_BATCH',
+  'PING',
+  'RESPAWN_REQUEST',
+  'QUIT',
+] as const;
+
+export type ClientMessageType = (typeof CLIENT_MESSAGE_TYPES)[number];
+
+export function isClientMessageType(value: unknown): value is ClientMessageType {
+  return typeof value === 'string' && (CLIENT_MESSAGE_TYPES as readonly string[]).includes(value);
+}
+
 export type ClientMessage =
   | { t: 'JOIN'; roomId: string; name: string; platform: PlatformMode }
   | { t: 'INPUT_BATCH'; cmds: ShipCommand[] }
-  | { t: 'PING'; clientTime: number };
+  | { t: 'PING'; clientTime: number }
+  | { t: 'RESPAWN_REQUEST' }
+  | { t: 'QUIT' };
+
+type EventBase = {
+  t: 'EVENT';
+  pos: [number, number, number];
+  scale: number;
+};
+
+export type PlayerDeathEvent = EventBase & {
+  kind: 'PLAYER_DEATH';
+  playerId?: string;
+  killerId?: string | number;
+  killerKind?: KillerKind;
+  respawnDelaySec?: number;
+};
+
+export type ScoreRecordedEvent = EventBase & {
+  kind: 'SCORE_RECORDED';
+  playerId: string;
+  name: string;
+  score: number;
+  wave: number;
+  rank?: number;
+};
+
+export type GenericEvent = EventBase & {
+  kind: 'EXPLOSION' | 'HIT' | 'PICKUP' | 'WAVE_CLEAR';
+};
+
+export type GameEvent = GenericEvent | PlayerDeathEvent | ScoreRecordedEvent;
 
 export type ServerMessage =
-  | { t: 'WELCOME'; playerId: string; roomId: string; serverTick: number; serverTime: number }
+  | {
+      t: 'WELCOME';
+      playerId: string;
+      roomId: string;
+      serverTick: number;
+      serverTime: number;
+      playerToken?: string;
+      protocol?: number;
+    }
   | { t: 'PONG'; clientTime: number; serverTime: number }
   | {
       t: 'SNAPSHOT';
@@ -91,11 +151,27 @@ export type ServerMessage =
       projectiles: ProjectileState[];
       pickups: PickupState[];
       wave: number;
+      /** @deprecated M5: sem game over; mantido para compatibilidade temporária. */
       gameOver?: boolean;
     }
+  | GameEvent
   | {
-      t: 'EVENT';
-      kind: 'EXPLOSION' | 'HIT' | 'PLAYER_DEATH' | 'PICKUP' | 'WAVE_CLEAR';
-      pos: [number, number, number];
-      scale: number;
+      t: 'LEADERBOARD';
+      scope: 'GLOBAL' | 'LOCAL';
+      entries: LeaderboardEntry[];
+      current?: LeaderboardEntry;
     };
+
+export const SERVER_MESSAGE_TYPES = [
+  'WELCOME',
+  'PONG',
+  'SNAPSHOT',
+  'EVENT',
+  'LEADERBOARD',
+] as const;
+
+export type ServerMessageType = (typeof SERVER_MESSAGE_TYPES)[number];
+
+export function isServerMessageType(value: unknown): value is ServerMessageType {
+  return typeof value === 'string' && (SERVER_MESSAGE_TYPES as readonly string[]).includes(value);
+}
