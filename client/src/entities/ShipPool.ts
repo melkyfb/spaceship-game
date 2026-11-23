@@ -56,6 +56,8 @@ export class ShipPool {
   private disposeTemplatePool(): void {
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
+    // Textures are not disposed here: cloned materials share texture references with the
+    // original template, so disposing them would break caller-owned template resources.
     for (const obj of this.templatePool) {
       obj.traverse((node) => {
         const mesh = node as THREE.Mesh

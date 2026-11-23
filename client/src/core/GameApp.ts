@@ -1,10 +1,13 @@
 import * as THREE from 'three'
 import type { ClientMessage, PlatformMode, ServerMessage, ShipCommand, ShipState } from '@asteroids/shared'
-import { WORLD_CONFIG } from '@asteroids/shared'
+import { SHIP_CONFIG, WORLD_CONFIG } from '@asteroids/shared'
 import { CockpitRig } from './CockpitRig'
 import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield, recenterStarfield } from './Starfield'
 import { SoundSynth } from '../audio/SoundSynth'
+import { AssetLoader } from '../assets/AssetLoader'
+import { ASSET_MANIFEST } from '../assets/manifest'
+import { normalizeObjectToRadius } from '../assets/model-utils'
 import { AsteroidPool } from '../entities/AsteroidPool'
 import { EnemyPool } from '../entities/EnemyShip'
 import { ParticleSystem } from '../entities/ParticleSystem'
@@ -170,6 +173,7 @@ export class GameApp {
   private readonly leaderboardHud: LeaderboardHud
   private readonly multiplayerUrl: string
 
+  private readonly assetLoader = new AssetLoader()
   private readonly asteroidPool: AsteroidPool
   private readonly projectilePool: ProjectilePool
   private readonly enemyPool: EnemyPool
@@ -243,6 +247,7 @@ export class GameApp {
     this.enemyPool = new EnemyPool(this.scene)
     this.shipPool = new ShipPool(this.scene)
     this.particleSystem = new ParticleSystem(this.scene)
+    void this.preloadShipTemplate()
 
     this.startScreen = new StartScreen({
       onTrain: (name) => {
@@ -444,6 +449,19 @@ export class GameApp {
         console.warn('[game] multiplayer transport error', err)
       },
     })
+  }
+
+  private async preloadShipTemplate(): Promise<void> {
+    try {
+      const def = ASSET_MANIFEST.playerShip
+      const ship = await this.assetLoader.load(def.url)
+      if (!ship) return
+      normalizeObjectToRadius(ship, SHIP_CONFIG.RADIUS)
+      if (def.yawOffsetRad) ship.rotation.y += def.yawOffsetRad
+      this.shipPool.setShipTemplate(ship)
+    } catch (err) {
+      console.warn('[GameApp] ship template preload failed, using fallback', err)
+    }
   }
 
   private resetSessionState(): void {
