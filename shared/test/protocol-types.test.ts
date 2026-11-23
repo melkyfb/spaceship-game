@@ -37,6 +37,7 @@ describe('M5 protocol types', () => {
   })
 
   it('WELCOME supports optional playerToken and protocol', () => {
+    expect.assertions(3)
     const msg: ServerMessage = {
       t: 'WELCOME',
       playerId: 'p1',
@@ -54,6 +55,7 @@ describe('M5 protocol types', () => {
   })
 
   it('PLAYER_DEATH event carries extended attribution fields', () => {
+    expect.assertions(5)
     const msg: ServerMessage = {
       t: 'EVENT',
       kind: 'PLAYER_DEATH',
@@ -74,6 +76,7 @@ describe('M5 protocol types', () => {
   })
 
   it('SCORE_RECORDED event carries score recording fields', () => {
+    expect.assertions(5)
     const msg: ServerMessage = {
       t: 'EVENT',
       kind: 'SCORE_RECORDED',
@@ -95,6 +98,7 @@ describe('M5 protocol types', () => {
   })
 
   it('LEADERBOARD server message has scope, entries, and optional current', () => {
+    expect.assertions(4)
     const msg: ServerMessage = {
       t: 'LEADERBOARD',
       scope: 'GLOBAL',
@@ -110,6 +114,7 @@ describe('M5 protocol types', () => {
   })
 
   it('SNAPSHOT gameOver remains optional/deprecated compatibility field', () => {
+    expect.assertions(2)
     const withFlag: ServerMessage = {
       t: 'SNAPSHOT',
       tick: 1,
