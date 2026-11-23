@@ -24,4 +24,37 @@ describe('AssetLoader', () => {
     const loader = new AssetLoader({ createLoader: () => ({ loadAsync }) as any })
     await expect(loader.load('/missing.glb')).resolves.toBeNull()
   })
+
+  it('retries after a failed load instead of caching null permanently', async () => {
+    const loadAsync = vi.fn()
+      .mockRejectedValueOnce(new Error('transient'))
+      .mockResolvedValueOnce(makeGltf())
+    const loader = new AssetLoader({ createLoader: () => ({ loadAsync }) as any })
+    await expect(loader.load('/retry.glb')).resolves.toBeNull()
+    const second = await loader.load('/retry.glb')
+    expect(loadAsync).toHaveBeenCalledTimes(2)
+    expect(second).toBeInstanceOf(THREE.Group)
+  })
+
+  it('clears timeout when load resolves first', async () => {
+    vi.useFakeTimers()
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const loadAsync = vi.fn(async () => makeGltf())
+      const loader = new AssetLoader({ createLoader: () => ({ loadAsync }) as any, timeoutMs: 1000 })
+      const p = loader.load('/fast.glb')
+      await vi.runAllTimersAsync()
+      const result = await p
+      expect(result).toBeInstanceOf(THREE.Group)
+      await vi.advanceTimersByTimeAsync(2000)
+      // allow microtasks to settle
+      await Promise.resolve()
+      expect(unhandled).toHaveLength(0)
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+      vi.useRealTimers()
+    }
+  })
 })

@@ -42,15 +42,22 @@ export class AssetLoader {
 
   private async doLoad(url: string): Promise<GLTF | null> {
     const loader = this.createLoader()
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
+      const timeout = new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`timeout ${url}`)), this.timeoutMs)
+      })
       const gltf = await Promise.race([
         loader.loadAsync(url),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`timeout ${url}`)), this.timeoutMs)),
+        timeout,
       ])
       return gltf as GLTF
     } catch (err) {
       console.warn('[AssetLoader] failed', url, err)
+      this.cache.delete(url)
       return null
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
     }
   }
 }
