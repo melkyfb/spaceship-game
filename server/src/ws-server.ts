@@ -1,6 +1,5 @@
-import { WebSocketServer, type RawData } from 'ws';
-import { encode } from '@msgpack/msgpack';
-import { decodeClientMessage, encodeServerMessage } from './protocol';
+import { WebSocketServer, type RawData, type WebSocket } from 'ws';
+import { RoomManager } from './RoomManager';
 
 /** Normalize ws RawData to a UTF-8 string (legacy helper kept for compatibility). */
 export function rawDataToString(data: RawData): string {
@@ -19,52 +18,52 @@ export function rawDataToBytes(data: RawData): Uint8Array {
   return new Uint8Array(data as ArrayBuffer);
 }
 
-/**
- * Build the development WS stub with the hello/pong contract attached.
- * Kept separate from the entry point so the contract can be tested in-process.
- */
-export function createWebSocketServer(port: number): WebSocketServer {
-  const wss = new WebSocketServer({ port });
+export interface CreateWebSocketServerOptions {
+  roomManager?: RoomManager;
+}
 
-  wss.on('connection', (socket) => {
-    // Greet every new client so the UI can confirm the proxy path works end to end.
-    socket.send(encode({ t: 'hello' }));
+/**
+ * Build the authoritative WS server wired to RoomManager/ServerRoom.
+ * Kept as a factory for in-process tests and index bootstrap.
+ */
+export function createWebSocketServer(port: number, opts: CreateWebSocketServerOptions = {}): WebSocketServer {
+  const wss = new WebSocketServer({ port });
+  const roomManager = opts.roomManager ?? new RoomManager();
+  roomManager.start();
+
+  wss.on('connection', (socket: WebSocket) => {
+    roomManager.handleOpen(socket);
 
     socket.on('message', (data, isBinary) => {
-      const bytes = isBinary || typeof data !== 'string' ? rawDataToBytes(data) : null;
-      if (!bytes) return;
+      const bytes = isBinary || typeof data !== 'string' ? rawDataToBytes(data) : Buffer.from(data, 'utf8');
+      roomManager.handleMessage(socket, bytes);
+    });
 
-      const result = decodeClientMessage(bytes);
-      if (!result.ok) return;
-
-      if (result.value.t === 'PING') {
-        socket.send(
-          encodeServerMessage({
-            t: 'PONG',
-            clientTime: result.value.clientTime,
-            serverTime: Date.now(),
-          }),
-        );
-      }
+    socket.on('close', () => {
+      roomManager.handleClose(socket);
     });
 
     socket.on('error', (err) => {
-      console.error('[ws-stub] socket error:', err);
+      console.error('[ws] socket error:', err);
     });
   });
 
   wss.on('listening', () => {
     const address = wss.address();
     const listeningPort = typeof address === 'object' && address ? address.port : port;
-    console.log(`[ws-stub] listening on ws://localhost:${listeningPort}`);
+    console.log(`[ws] listening on ws://localhost:${listeningPort}`);
+  });
+
+  wss.on('close', () => {
+    roomManager.stop();
   });
 
   wss.on('error', (err) => {
     if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-      console.error(`[ws-stub] port ${port} is already in use — is another "server dev" running?`);
+      console.error(`[ws] port ${port} is already in use — is another "server dev" running?`);
       return;
     }
-    console.error('[ws-stub] server error:', err);
+    console.error('[ws] server error:', err);
   });
 
   return wss;

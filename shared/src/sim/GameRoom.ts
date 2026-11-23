@@ -31,6 +31,8 @@ export interface GameRoomOptions {
   gameOverOnDeath?: boolean
   /** When true, dead players respawn automatically after delay. Defaults to false (request required). */
   autoRespawn?: boolean
+  /** When false, the room starts with no default player. Defaults to true. */
+  createDefaultPlayer?: boolean
 }
 
 export interface AddPlayerOptions {
@@ -244,11 +246,12 @@ export class GameRoom {
     // M5 multiplayer/training should pass autoRespawn: false and use requestRespawn.
     this.autoRespawn = opts.autoRespawn ?? (opts.gameOverOnDeath === false)
 
-    const playerId = opts.playerId ?? 'p1'
-    const playerName = opts.playerName ?? 'Player'
-    const platform = opts.platform ?? 'PC'
-
-    this.addShipInternal(playerId, playerName, platform, WORLD_CONFIG.SPAWN_INVULN_SEC)
+    if (opts.createDefaultPlayer !== false) {
+      const playerId = opts.playerId ?? 'p1'
+      const playerName = opts.playerName ?? 'Player'
+      const platform = opts.platform ?? 'PC'
+      this.addShipInternal(playerId, playerName, platform, WORLD_CONFIG.SPAWN_INVULN_SEC)
+    }
 
     if (Array.isArray(opts.initialAsteroids)) {
       let maxId = 0
