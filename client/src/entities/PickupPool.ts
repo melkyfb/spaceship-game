@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { PickupState } from '@asteroids/shared'
+import { normalizeObjectToRadius } from '../assets/model-utils'
 
 export type PickupKind = 'SHIELD_CRYSTAL' | 'ENERGY_CRYSTAL'
 
@@ -13,6 +14,7 @@ interface PickupSlot {
 }
 
 const PICKUP_KINDS: PickupKind[] = ['SHIELD_CRYSTAL', 'ENERGY_CRYSTAL']
+const PICKUP_VISUAL_RADIUS = 2.0
 
 function createFallbackObject(kind: PickupKind): THREE.Mesh {
   const geometry =
@@ -37,7 +39,14 @@ function cloneTemplateObject(template: THREE.Object3D): THREE.Object3D {
     const mesh = obj as THREE.Mesh
     if (!mesh.isMesh) return
     mesh.frustumCulled = false
+    mesh.geometry = mesh.geometry.clone()
+    if (Array.isArray(mesh.material)) {
+      mesh.material = mesh.material.map((m) => m.clone())
+    } else if (mesh.material) {
+      mesh.material = mesh.material.clone()
+    }
   })
+  normalizeObjectToRadius(clone, 1)
   return clone
 }
 
@@ -68,6 +77,7 @@ export class PickupPool {
       const group = new THREE.Group()
       group.name = `PickupSlot_${i}`
       group.visible = false
+      group.scale.setScalar(PICKUP_VISUAL_RADIUS)
 
       const byKind = {} as Record<PickupKind, THREE.Object3D>
       for (let k = 0; k < PICKUP_KINDS.length; k++) {
@@ -85,7 +95,8 @@ export class PickupPool {
   }
 
   update(pickups: readonly PickupState[], dtSec: number): void {
-    this.time += Number.isFinite(dtSec) ? dtSec : 0
+    const dt = Number.isFinite(dtSec) ? dtSec : 0
+    this.time += dt
     const count = Math.min(pickups.length, this.capacity)
 
     for (let i = 0; i < count; i++) {
@@ -93,9 +104,10 @@ export class PickupPool {
       const slot = this.slots[i]
       if (p === undefined || slot === undefined) continue
 
+      if (!slot.group.visible) slot.group.rotation.set(0, 0, 0)
       const bob = Math.sin(this.time * 2 + p.id) * 0.15
       slot.group.position.set(p.pos[0], p.pos[1] + bob, p.pos[2])
-      slot.group.rotation.y += (Number.isFinite(dtSec) ? dtSec : 0) * 1.5
+      slot.group.rotation.y += dt * 1.5
       slot.group.visible = true
 
       for (let k = 0; k < PICKUP_KINDS.length; k++) {
