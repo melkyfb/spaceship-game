@@ -65,7 +65,7 @@ export class SoundSynth {
     }
   }
 
-  playEvent(event: SoundEvent): void {
+  playEvent(event: { kind: string; pos: readonly [number, number, number]; scale: number }): void {
     const ctx = this.ctx
     if (!ctx || this.disposed || ctx.state !== 'running') return
     try {
