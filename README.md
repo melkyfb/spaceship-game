@@ -5,10 +5,12 @@ matemático e física determinística** no pacote isomórfico `shared/`, o **M0 
 cliente Vite/TypeScript com servidor de desenvolvimento HTTPS confiável, status
 WebSocket e proxy `/ws` na mesma origem** (além do stub WS em `server/`), o
 **M2 — cockpit 3D procedural, pipeline de render tri-modal (Flat / VR Box / Quest 3
-WebXR) e HUD diegético com radar e offscreen pips, sem assets externos** e o
+WebXR) e HUD diegético com radar e offscreen pips, sem assets externos**, o
 **M3 — sistema de input cross-platform com normalização comum, InputManager e
-adaptadores Desktop/Touch/VR Box/Quest XR**. O servidor de jogo real e o
-loop/IA (M4) ainda serão adicionados.
+adaptadores Desktop/Touch/VR Box/Quest XR** e o **M4 — vertical slice jogável em
+modo solo (US-11/US-12)** com sim determinística em Web Worker (`LocalTransport`/
+`GameRoom`), asteroides fragmentáveis por tier, IA inimiga com ondas/orçamento e
+áudio procedural 3D. O servidor multiplayer autoritativo real (M5) ainda será adicionado.
 
 ## Pré-requisitos
 
@@ -68,8 +70,9 @@ pnpm dev:server            # atalho para pnpm -C server dev
 Todos os comandos acima foram executados com sucesso (`exit 0`) nas verificações das fases
 entregues. Evidências: Fase 1 (`docs/superpowers/specs/2026-11-22-fase-1-fisica-testes-design.md`),
 M0 (`docs/superpowers/specs/2026-11-22-fase-0-client-https-ws-design.md`), M2
-(`docs/superpowers/specs/2026-11-22-m2-render-cockpit-hud-design.md`) e M3
-(`docs/superpowers/specs/2026-11-22-m3-inputs-cross-platform-design.md`).
+(`docs/superpowers/specs/2026-11-22-m2-render-cockpit-hud-design.md`), M3
+(`docs/superpowers/specs/2026-11-22-m3-inputs-cross-platform-design.md`) e M4
+(`docs/superpowers/specs/2026-11-22-m4-solo-vertical-slice-design.md`).
 
 ## HTTPS local (mkcert)
 
@@ -271,6 +274,66 @@ Fonte autoritativa: `docs/superpowers/specs/2026-11-22-m3-inputs-cross-platform-
 > navegador/dispositivo. Não marcar como validado sem evidência. Qualquer input VR que mova nave
 > pela cabeça é bug de spec (ADR-01).
 
+## M4 — Vertical Slice Jogável / Modo Solo (US-11/US-12)
+
+O M4 roda a simulação autoritativa do solo em `shared/src/sim/` dentro de um Web Worker,
+exposta ao cliente por `ITransport`/`LocalTransport`. O cliente envia `INPUT_BATCH`
+(gerado por `InputManager.getCommand(tick)`) e recebe `SNAPSHOT`/`EVENT`; renderiza com
+pools `InstancedMesh` e reproduz áudio procedural 3D via Web Audio/PannerNode.
+
+- **ADR-04:** zero assets externos — geometria/material/áudio procedurais.
+- **ADR-06:** sim determinística em passo fixo `1/30s` (`WORLD_CONFIG.FIXED_TICK_RATE`), snapshots 20Hz.
+- **US-11 fragmentação:** fonte de verdade `ASTEROID_TIERS` — LARGE→3 MEDIUM, MEDIUM→2 SMALL, SMALL→0.
+  O texto literal do US-11 menciona "3 MEDIUM e 2 SMALL" para LARGE; a ambiguidade está documentada e a
+  implementação segue `ASTEROID_TIERS`.
+- **US-12 ondas/IA:** orçamento `10 + 4*wave + 2*playerCount`; custos LARGE=3, SCOUT=3, SCAVENGER=2, BRUISER=6;
+  spawn em casca `[280,420]` a >=120u de jogadores vivos; SCOUT/BRUISER/SCAVENGER com 5-ray cone avoidance.
+
+### Como rodar (solo local)
+
+```bash
+pnpm install
+pnpm -C client dev
+```
+
+Abra `https://localhost:5173?render=FLAT` (ou `VR_BOX` / `QUEST_3`). O modo solo local
+não depende do stub WS do `server/` para gameplay; o overlay `WS: ...` do M0 pode
+continuar aparecendo como diagnóstico do proxy `/ws`.
+
+### Controles (resumo)
+
+| Plataforma | Controles |
+| --- | --- |
+| Desktop | WASD/Space/Ctrl/Q/E/Shift, mouse PointerLock, LMB/RMB, Alt free-look temporário (ADR-02), gamepad padrão |
+| Android Flat | Joysticks dinâmicos multitouch + FIRE/MISSILE/BOOST |
+| VR Box | Giroscópio relativo só no `PilotHeadRig` (ADR-01) + gamepad/wizard BT |
+| Quest 3 | Controllers WebXR, recenter, haptics quando disponíveis |
+
+O áudio procedural inicia somente após gesto do usuário (pointerdown/keydown), conforme política de autoplay.
+
+### Checklist manual M4 (validação em dispositivo)
+
+Preenchido apenas com itens realmente executados; o que não foi executado está `PENDENTE`.
+
+| Plataforma | Cenário | FPS observado | Gameplay/HUD/áudio corretos | Sem assets externos | Evidência |
+| --- | --- | --- | --- | --- | --- |
+| PC (Chrome/Edge, Flat) | `https://localhost:5173?render=FLAT` solo | `PENDENTE` | `PENDENTE` | `PENDENTE` em dispositivo (código auditado: ✅) | Typecheck/test/build PASS (2026-11-22); abertura ao vivo não executada. |
+| Android Chrome (Flat) | `https://<IP-LAN>:5173?render=FLAT` | `PENDENTE` | `PENDENTE` | `PENDENTE` em dispositivo (código auditado: ✅) | Não executado; requer CA mkcert instalada no dispositivo. |
+| VR Box (Android + visor) | `https://<IP-LAN>:5173?render=VR_BOX` | `PENDENTE` | `PENDENTE` | `PENDENTE` em dispositivo (código auditado: ✅) | Não executado; requer gamepad BT/giroscópio/conforto visual. |
+| Quest 3 (WebXR) | `https://<IP-LAN>:5173?render=QUEST_3` | `PENDENTE` | `PENDENTE` | `PENDENTE` em dispositivo (código auditado: ✅) | Não executado; meta 72–90 FPS não medida. |
+
+### Verificação automatizada M4 (executada em 2026-11-22)
+
+| Comando | Resultado |
+| --- | --- |
+| `pnpm -r typecheck` | PASS — `shared`, `server` e `client` `Done`. |
+| `pnpm -r test` | PASS — `shared` 9 arquivos / 91 testes, `server` 1 teste, `client` 18 arquivos / 93 testes. |
+| `pnpm -C client build` | PASS — `✓ 56 modules transformed`, worker `local.worker-RJ_Sl2lZ.js 37.79 kB`, bundle `index-CiBgBPQg.js 621.45 kB │ gzip: 157.71 kB`, `✓ built in 1.51s` (aviso pré-existente de chunk >500 kB, não bloqueante). |
+
+> **Limitações M4:** validação real de dispositivo/FPS/conforto/balanceamento fino não executada
+> nesta sessão. AudioContext depende de gesto/política do browser e degrada silenciosamente em falha.
+> LocalTransport é solo local com seed fixa; multiplayer autoritativo fica para M5.
+
 ## Estrutura atual
 
 ```
@@ -281,21 +344,40 @@ shared/
     math.ts        # clamp/finite, SpatialHash3D, swept segment/sphere
     physics.ts     # FIXED_DT = 1/30, damping, quatérnio, fronteira magnética, stepShip
     collision.ts   # resolvers swept projétil/asteroide e nave/asteroide + pool de eventos
+    sim/
+      ids.ts         # IdSeq monotônico determinístico
+      spawn.ts       # spawn seguro em casca + fragmentação por ASTEROID_TIERS
+      WaveManager.ts # orçamento 10+4*w+2*Nplayers e planejamento de ondas
+      EnemyAI.ts     # steering 3D + 5-ray cone avoidance (SCOUT/BRUISER/SCAVENGER)
+      GameRoom.ts    # loop fixo 30Hz, snapshots 20Hz, eventos, colisões/pickups/waves
+      index.ts       # exports da sim
     index.ts       # exports públicos
-  test/            # Vitest: constants, math, physics, collision, smoke
+  test/            # Vitest: constants, math, physics, collision, smoke, sim/*
 client/
   index.html       # página de entrada (#app)
   vite.config.ts   # HTTPS (mkcert), 0.0.0.0:5173 / preview 4173 + proxy /ws em ambos
   src/
-    main.ts        # bootstrap GameApp + ?render= + hooks dev + status WS do M0
+    main.ts        # bootstrap GameApp + ?render= + hooks dev + gesto de áudio + status WS M0
     ws-status.ts   # buildWsUrl() — URL WS na mesma origem (wss para https)
     style.css
     core/
-      GameApp.ts         # Scene/renderer, setAnimationLoop, estado mock, input sync, dispose
+      GameApp.ts         # Scene/renderer, loop, input, transport, snapshot apply, pools, áudio
       Starfield.ts       # campo estelar procedural sem assets
       CockpitRig.ts      # hierarquia ShipRoot/CockpitFrame/PilotHeadRig (spec 4.4)
       render-config.ts   # constantes barrel/IPD/DPR/XR
       RenderPipeline.ts  # FLAT / VR_BOX (estéreo + barrel) / QUEST_3 (WebXR)
+    net/
+      ITransport.ts      # contrato connect/send/onMessage/close
+      LocalTransport.ts  # ponte main thread <-> Web Worker
+      local.worker.ts    # GameRoom em Worker (30Hz, snapshots 20Hz, eventos)
+    entities/
+      AsteroidPool.ts    # InstancedMesh por tier (LARGE/MEDIUM/SMALL)
+      ProjectilePool.ts  # InstancedMesh de projéteis
+      EnemyShip.ts       # InstancedMesh por arquétipo (SCOUT/BRUISER/SCAVENGER)
+      ShipPool.ts        # InstancedMesh de naves remotas
+      ParticleSystem.ts  # pool fixo de partículas vetoriais (EXPLOSION/HIT/DEATH)
+    audio/
+      SoundSynth.ts      # Web Audio API + PannerNode, síntese procedural, gesto obrigatório
     input/
       input-math.ts          # clampAxis, deadzone radial 0.15, curva exponencial 1.6
       types.ts               # InputAdapter/InputState/NormalizedAxes
@@ -329,6 +411,9 @@ client/
     vrbox-math.test.ts         # quaternion YXZ e calibração de eixo
     vrbox-wizard.test.ts       # wizard de mapeamento BT
     quest-xr-mapping.test.ts   # mapeamento puro Quest XR
+    net/local-transport.test.ts    # contrato LocalTransport/Worker mockado
+    entities/asteroid-pool.test.ts # mapeamento/capacidade de instâncias de asteroides
+    audio/sound-synth.test.ts      # AudioContext mock, gesto/resume, playEvent seguro
   vitest.config.ts
 server/
   package.json     # ws + tsx (scripts dev/test)
@@ -357,6 +442,9 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
 - Plano M3 (inputs cross-platform): `docs/superpowers/plans/2026-11-22-m3-inputs-cross-platform.md`
 - Design e verificação M3 (checklist Desktop/Android Flat/VR Box/Quest 3): `docs/superpowers/specs/2026-11-22-m3-inputs-cross-platform-design.md`
 - SDD/ledger M3: `.superpowers/sdd/2026-11-22-m3-inputs-cross-platform/`
+- Plano M4 (solo vertical slice): `docs/superpowers/plans/2026-11-22-m4-solo-vertical-slice.md`
+- Design e verificação M4 (LocalTransport/Worker, fragmentação, ondas/IA, áudio, checklist): `docs/superpowers/specs/2026-11-22-m4-solo-vertical-slice-design.md`
+- SDD/ledger M4: `.superpowers/sdd/2026-11-22-m4-solo-vertical-slice/`
 
 ## Próximos passos
 
@@ -368,5 +456,8 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
   giroscópio/WakeLock, gamepad BT wizard, WebXR controllers/haptics) — tudo `PENDENTE`
   neste ambiente. Não marcar validado sem evidência; qualquer input VR que mova nave pela
   cabeça é bug de spec (ADR-01).
-- M4: integrar `InputManager.getCommand(tick)` ao loop local/Worker (LocalTransport/GameRoom)
-  para vertical slice jogável.
+- M4 / US-11..12: validação em dispositivo do checklist M4 (PC/Android/VR Box/Quest 3),
+  FPS real, conforto, áudio após gesto e balanceamento fino — tudo `PENDENTE` neste ambiente.
+  Ambiguidade US-11 documentada: implementação segue `ASTEROID_TIERS`.
+- M5: evoluir LocalTransport/Worker para servidor autoritativo multiplayer, reaproveitando
+  a sim isomórfica em `shared/src/sim`.
