@@ -31,4 +31,25 @@ describe('Interpolator', () => {
     interp.push(0, [{ id: 'e1', pos: [0, 0, 0], rot: [0, 0, 0, 1] }])
     expect(interp.sample('missing', 150)).toBeNull()
   })
+
+  it('sampleInto writes into reused output without allocating result object', () => {
+    const interp = new Interpolator({ delayMs: 100 })
+    interp.push(0, [{ id: 'e1', pos: [0, 0, 0], rot: [0, 0, 0, 1], vel: [0, 0, 0] }])
+    interp.push(100, [{ id: 'e1', pos: [10, 0, 0], rot: [0, 0, 0, 1], vel: [10, 0, 0] }])
+
+    const out = { pos: [0, 0, 0] as [number, number, number], rot: [0, 0, 0, 1] as [number, number, number, number], vel: [0, 0, 0] as [number, number, number] }
+    const posRef = out.pos
+    const rotRef = out.rot
+    const velRef = out.vel
+
+    const ok = interp.sampleInto('e1', 150, out)
+    expect(ok).toBe(true)
+    expect(out.pos).toBe(posRef)
+    expect(out.rot).toBe(rotRef)
+    expect(out.vel).toBe(velRef)
+    expect(out.pos[0]).toBeCloseTo(5, 5)
+    expect(out.vel?.[0]).toBeCloseTo(5, 5)
+
+    expect(interp.sampleInto('missing', 150, out)).toBe(false)
+  })
 })

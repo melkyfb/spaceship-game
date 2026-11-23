@@ -120,6 +120,7 @@ export class Predictor {
   private hasCorrection = false
   private readonly scratchQuat: [number, number, number, number] = [0, 0, 0, 1]
   private readonly scratchQuat2: [number, number, number, number] = [0, 0, 0, 1]
+  private readonly IDENTITY_QUAT: readonly [number, number, number, number] = [0, 0, 0, 1]
 
   constructor(config: PredictorConfig = {}) {
     const snap = config.snapThreshold ?? 20
@@ -219,7 +220,7 @@ export class Predictor {
     quatMul(this.correctionRot, this.scratchQuat, oldDisplayRot)
     normalizeQuat(this.correctionRot)
 
-    this.hasCorrection = distSq > 1e-10 || Math.abs(quatDot(this.correctionRot, [0, 0, 0, 1])) < 0.999999
+    this.hasCorrection = distSq > 1e-10 || Math.abs(quatDot(this.correctionRot, this.IDENTITY_QUAT)) < 0.999999
   }
 
   /** Decay visual correction offset over time (exponential). */
@@ -233,7 +234,7 @@ export class Predictor {
     this.correctionPos[1] += (0 - this.correctionPos[1]) * alpha
     this.correctionPos[2] += (0 - this.correctionPos[2]) * alpha
 
-    quatNlerp(this.scratchQuat2, this.correctionRot, [0, 0, 0, 1], alpha)
+    quatNlerp(this.scratchQuat2, this.correctionRot, this.IDENTITY_QUAT, alpha)
     this.correctionRot[0] = this.scratchQuat2[0]
     this.correctionRot[1] = this.scratchQuat2[1]
     this.correctionRot[2] = this.scratchQuat2[2]
@@ -243,7 +244,7 @@ export class Predictor {
       this.correctionPos[0] * this.correctionPos[0] +
       this.correctionPos[1] * this.correctionPos[1] +
       this.correctionPos[2] * this.correctionPos[2]
-    const rotClose = Math.abs(quatDot(this.correctionRot, [0, 0, 0, 1])) > 0.999999
+    const rotClose = Math.abs(quatDot(this.correctionRot, this.IDENTITY_QUAT)) > 0.999999
     if (posDistSq < 1e-10 && rotClose) {
       this.correctionPos[0] = 0
       this.correctionPos[1] = 0

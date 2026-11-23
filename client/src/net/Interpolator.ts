@@ -152,11 +152,12 @@ export class Interpolator {
   }
 
   /**
-   * Sample an entity at render time = serverTime - delayMs.
-   * Returns null when the entity is not present in buffered snapshots.
+   * Sample an entity at render time = serverTime - delayMs into a reused out object.
+   * Returns false when the entity is not present in buffered snapshots.
+   * Hot-path friendly: writes into existing out.pos/out.rot/out.vel arrays.
    */
-  sample(entityId: string | number, serverTime: number): InterpolatedState | null {
-    if (!Number.isFinite(serverTime) || this.frames.length === 0) return null
+  sampleInto(entityId: string | number, serverTime: number, out: InterpolatedState): boolean {
+    if (!Number.isFinite(serverTime) || this.frames.length === 0) return false
     const renderTime = serverTime - this.delayMs
 
     // Find bracketing frames containing the entity.
@@ -175,37 +176,39 @@ export class Interpolator {
       }
     }
 
-    if (before === undefined && after === undefined) return null
+    if (before === undefined && after === undefined) return false
     if (before === undefined) before = after
     if (after === undefined) after = before
-    if (before === undefined || after === undefined) return null
+    if (before === undefined || after === undefined) return false
 
     const a = before.entities.get(entityId)
     const b = after.entities.get(entityId)
-    if (a === undefined || b === undefined) return null
+    if (a === undefined || b === undefined) return false
 
     if (before === after || after.serverTime <= before.serverTime) {
-      return this.entityToState(a)
+      this.writeEntityState(a, out)
+      return true
     }
 
     const t = clamp01((renderTime - before.serverTime) / (after.serverTime - before.serverTime))
-    const pos: [number, number, number] = [
-      lerp(a.pos[0], b.pos[0], t),
-      lerp(a.pos[1], b.pos[1], t),
-      lerp(a.pos[2], b.pos[2], t),
-    ]
-    const rot: [number, number, number, number] = [0, 0, 0, 1]
-    slerpQuat(rot, a.rot, b.rot, t)
+    out.pos[0] = lerp(a.pos[0], b.pos[0], t)
+    out.pos[1] = lerp(a.pos[1], b.pos[1], t)
+    out.pos[2] = lerp(a.pos[2], b.pos[2], t)
+    slerpQuat(out.rot, a.rot, b.rot, t)
 
-    const state: InterpolatedState = { pos, rot }
-    if (a.vel !== undefined && b.vel !== undefined) {
-      state.vel = [lerp(a.vel[0], b.vel[0], t), lerp(a.vel[1], b.vel[1], t), lerp(a.vel[2], b.vel[2], t)]
-    } else if (a.vel !== undefined) {
-      state.vel = [a.vel[0], a.vel[1], a.vel[2]]
-    } else if (b.vel !== undefined) {
-      state.vel = [b.vel[0], b.vel[1], b.vel[2]]
-    }
-    return state
+    this.writeVel(a, b, t, out)
+    return true
+  }
+
+  /**
+   * Sample an entity at render time = serverTime - delayMs.
+   * Returns null when the entity is not present in buffered snapshots.
+   * Convenience wrapper; use sampleInto on per-frame hot paths.
+   */
+  sample(entityId: string | number, serverTime: number): InterpolatedState | null {
+    const out: InterpolatedState = { pos: [0, 0, 0], rot: [0, 0, 0, 1] }
+    if (!this.sampleInto(entityId, serverTime, out)) return null
+    return out
   }
 
   /** Clear buffered snapshots. */
@@ -213,14 +216,57 @@ export class Interpolator {
     this.frames.length = 0
   }
 
-  private entityToState(e: InterpolatorEntity): InterpolatedState {
-    const state: InterpolatedState = {
-      pos: [e.pos[0], e.pos[1], e.pos[2]],
-      rot: [e.rot[0], e.rot[1], e.rot[2], e.rot[3]],
-    }
+  private writeEntityState(e: InterpolatorEntity, out: InterpolatedState): void {
+    out.pos[0] = e.pos[0]
+    out.pos[1] = e.pos[1]
+    out.pos[2] = e.pos[2]
+    out.rot[0] = e.rot[0]
+    out.rot[1] = e.rot[1]
+    out.rot[2] = e.rot[2]
+    out.rot[3] = e.rot[3]
     if (e.vel !== undefined) {
-      state.vel = [e.vel[0], e.vel[1], e.vel[2]]
+      if (out.vel === undefined) out.vel = [e.vel[0], e.vel[1], e.vel[2]]
+      else {
+        out.vel[0] = e.vel[0]
+        out.vel[1] = e.vel[1]
+        out.vel[2] = e.vel[2]
+      }
+    } else {
+      out.vel = undefined
     }
-    return state
+  }
+
+  private writeVel(
+    a: InterpolatorEntity,
+    b: InterpolatorEntity,
+    t: number,
+    out: InterpolatedState,
+  ): void {
+    if (a.vel !== undefined && b.vel !== undefined) {
+      if (out.vel === undefined) out.vel = [0, 0, 0]
+      out.vel[0] = lerp(a.vel[0], b.vel[0], t)
+      out.vel[1] = lerp(a.vel[1], b.vel[1], t)
+      out.vel[2] = lerp(a.vel[2], b.vel[2], t)
+      return
+    }
+    if (a.vel !== undefined) {
+      if (out.vel === undefined) out.vel = [a.vel[0], a.vel[1], a.vel[2]]
+      else {
+        out.vel[0] = a.vel[0]
+        out.vel[1] = a.vel[1]
+        out.vel[2] = a.vel[2]
+      }
+      return
+    }
+    if (b.vel !== undefined) {
+      if (out.vel === undefined) out.vel = [b.vel[0], b.vel[1], b.vel[2]]
+      else {
+        out.vel[0] = b.vel[0]
+        out.vel[1] = b.vel[1]
+        out.vel[2] = b.vel[2]
+      }
+      return
+    }
+    out.vel = undefined
   }
 }
