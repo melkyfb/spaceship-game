@@ -102,10 +102,13 @@ function runBlenderExport(blender, item) {
     '--',
     '--source', sourcePath,
     '--output', outputPath,
-    '--target-radius', String(item.targetRadius ?? ''),
-    '--forward', String(item.forward ?? '-Z'),
   ]
+  if (item.forward) args.push('--forward', String(item.forward))
+  if (Number.isFinite(item.targetRadius)) args.push('--target-radius', String(item.targetRadius))
   if (item.nodeFilter) args.push('--node-filter', String(item.nodeFilter))
+  if (Array.isArray(item.rotationDeg) && item.rotationDeg.length === 3) {
+    args.push('--rotation-deg', item.rotationDeg.map((n) => String(n)).join(','))
+  }
   if (item.id) args.push('--id', String(item.id))
 
   const r = spawnSync(blender.bin, args, { encoding: 'utf8', cwd: repoRoot, shell: false })
@@ -192,11 +195,19 @@ async function main() {
       nodeFilter: item.nodeFilter ?? null,
     }
 
+    const hasRotationConfig = Array.isArray(item.rotationDeg) && item.rotationDeg.length === 3
+    const hasTargetRadius = Number.isFinite(item.targetRadius) && item.targetRadius > 0
+    const forward = item.forward ? String(item.forward).toUpperCase() : null
+
     if (args.dryRun) {
       if (!fs.existsSync(sourcePath)) {
         items.push({ ...base, status: 'manual', reason: `Source missing: ${item.source}` })
       } else if (!canAutoExport(sourcePath)) {
         items.push({ ...base, status: 'manual', reason: `Unsupported/ambiguous source format for automation: ${path.extname(sourcePath)}` })
+      } else if (!hasTargetRadius) {
+        items.push({ ...base, status: 'manual', reason: 'targetRadius is required for normalization/export' })
+      } else if (forward === '-Z' && !hasRotationConfig) {
+        items.push({ ...base, status: 'manual', reason: 'Forward orientation required (-Z) but no explicit rotation configured; set rotationDeg [pitch,yaw,roll] in sources' })
       } else if (!blender) {
         items.push({ ...base, status: 'manual', reason: 'Blender not found' })
       } else {
@@ -211,6 +222,14 @@ async function main() {
     }
     if (!canAutoExport(sourcePath)) {
       items.push({ ...base, status: 'manual', reason: `Unsupported/ambiguous source format for automation: ${path.extname(sourcePath)}` })
+      continue
+    }
+    if (!hasTargetRadius) {
+      items.push({ ...base, status: 'manual', reason: 'targetRadius is required for normalization/export' })
+      continue
+    }
+    if (forward === '-Z' && !hasRotationConfig) {
+      items.push({ ...base, status: 'manual', reason: 'Forward orientation required (-Z) but no explicit rotation configured; set rotationDeg [pitch,yaw,roll] in sources' })
       continue
     }
     if (!blender) {

@@ -72,7 +72,7 @@ Manual checklist:
 3. Apply transforms.
 4. Set origin to gameplay center (bounds center/pivot expected by gameplay). **Do not use mesh collider.**
 5. Normalize scale so bounding-sphere radius matches `targetRadius` (gameplay units).
-6. Orient forward to **-Z** for ships/missiles; verify pickups/asteroids as needed.
+6. Orient forward to **-Z** for ships/missiles; set `rotationDeg: [pitch,yaw,roll]` in `sources.p1.json` (degrees, applied in Blender XYZ Euler) when explicit rotation is needed. Items with `forward: "-Z"` require explicit rotation config (`rotationDeg` or yaw/pitch/roll args) so automation does not guess orientation. Verify pickups/asteroids as needed.
 7. Export GLB with +Y up, transforms applied.
 8. Place optimized GLB at the `output` path from `sources.p1.json`.
 9. Re-run dry-run/report and verify file loads in game.

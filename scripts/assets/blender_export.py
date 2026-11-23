@@ -14,13 +14,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Export normalized GLB for Asteroids P1 assets")
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--target-radius", type=float, default=None)
-    parser.add_argument("--forward", default="-Z")
+    parser.add_argument("--target-radius", default=None)
+    parser.add_argument("--forward", default=None)
     parser.add_argument("--node-filter", default=None)
     parser.add_argument("--id", default=None)
     parser.add_argument("--yaw-deg", type=float, default=0.0)
     parser.add_argument("--pitch-deg", type=float, default=0.0)
     parser.add_argument("--roll-deg", type=float, default=0.0)
+    parser.add_argument("--rotation-deg", default=None, help="pitch,yaw,roll degrees")
     return parser.parse_args(argv)
 
 
@@ -159,9 +160,36 @@ def recenter_to_bounds_center(bpy, objects):
     return center
 
 
-def normalize_scale_to_radius(bpy, objects, target_radius):
-    if target_radius is None or target_radius <= 0:
+def parse_target_radius(value, asset_id=None):
+    if value is None or value == "":
         return None
+    try:
+        radius = float(value)
+    except Exception:
+        manual("Invalid targetRadius; expected a number", id=asset_id, targetRadius=value)
+    if not math.isfinite(radius) or radius <= 0:
+        manual("Invalid targetRadius; expected a positive finite number", id=asset_id, targetRadius=value)
+    return radius
+
+
+def parse_rotation_deg(args):
+    if args.rotation_deg:
+        parts = [p.strip() for p in str(args.rotation_deg).split(",")]
+        if len(parts) != 3:
+            manual("Invalid rotationDeg; expected pitch,yaw,roll", rotationDeg=args.rotation_deg)
+        try:
+            pitch, yaw, roll = [float(p) for p in parts]
+        except Exception:
+            manual("Invalid rotationDeg; expected numeric pitch,yaw,roll", rotationDeg=args.rotation_deg)
+        return pitch, yaw, roll
+    return args.pitch_deg, args.yaw_deg, args.roll_deg
+
+
+def normalize_scale_to_radius(bpy, objects, target_radius, asset_id=None):
+    if target_radius is None:
+        manual("targetRadius is required for normalization/export", id=asset_id)
+    if not math.isfinite(target_radius) or target_radius <= 0:
+        manual("Invalid targetRadius; expected a positive finite number", id=asset_id, targetRadius=target_radius)
     import mathutils
 
     depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -204,18 +232,25 @@ def normalize_scale_to_radius(bpy, objects, target_radius):
     return {"sourceRadius": radius, "scale": scale, "targetRadius": target_radius}
 
 
-def orient_forward(bpy, objects, forward, yaw_deg, pitch_deg, roll_deg):
-    # Configurable orientation. Default is identity; explicit euler offsets can be provided.
-    # forward indicates desired gameplay forward convention; no implicit source-forward guess.
+def orient_forward(bpy, objects, forward, pitch_deg, yaw_deg, roll_deg, rotation_configured):
+    # Forward orientation is a gameplay contract. We only apply explicit configured rotations;
+    # if forward is required but no explicit rotation mapping is configured, emit manual.
     import mathutils
+
+    forward_norm = str(forward).upper() if forward else None
+    if forward_norm == "-Z":
+        if not rotation_configured:
+            manual(
+                "Forward orientation required (-Z) but no explicit rotation configured; set rotationDeg [pitch,yaw,roll] or yaw/pitch/roll in sources",
+                forward=forward,
+            )
+    elif forward_norm is not None and forward_norm not in ("+Z", "+X", "-X", "+Y", "-Y"):
+        manual(f"Unsupported forward value: {forward}", forward=forward)
 
     yaw = math.radians(yaw_deg)
     pitch = math.radians(pitch_deg)
     roll = math.radians(roll_deg)
-    if abs(yaw) < 1e-9 and abs(pitch) < 1e-9 and abs(roll) < 1e-9:
-        return {"forward": forward, "appliedRotationDeg": [roll_deg, pitch_deg, yaw_deg], "note": "no rotation applied"}
     rot = mathutils.Euler((pitch, yaw, roll), 'XYZ').to_matrix().to_4x4()
-    # rotate around world origin (objects should already be centered)
     for obj in root_objects(objects):
         obj.matrix_world = rot @ obj.matrix_world
     bpy.context.view_layer.update()
@@ -226,7 +261,11 @@ def orient_forward(bpy, objects, forward, yaw_deg, pitch_deg, roll_deg):
         obj.select_set(True)
     bpy.context.view_layer.objects.active = targets[0]
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
-    return {"forward": forward, "appliedRotationDeg": [roll_deg, pitch_deg, yaw_deg]}
+    return {
+        "forward": forward_norm,
+        "appliedRotationDeg": [pitch_deg, yaw_deg, roll_deg],
+        "rotationConfigured": bool(rotation_configured),
+    }
 
 
 def export_glb(bpy, output, objects):
@@ -259,13 +298,19 @@ def main():
         manual("Source file missing", id=args.id, source=args.source, output=args.output)
 
     try:
+        target_radius = parse_target_radius(args.target_radius, asset_id=args.id)
+        pitch_deg, yaw_deg, roll_deg = parse_rotation_deg(args)
+        rotation_configured = args.rotation_deg is not None or any(
+            abs(v) > 1e-9 for v in (args.yaw_deg, args.pitch_deg, args.roll_deg)
+        )
+
         clean_scene(bpy)
         import_source(bpy, source)
         objects = select_export_objects(bpy, args.node_filter)
         apply_transforms(bpy, objects)
         center = recenter_to_bounds_center(bpy, objects)
-        scale_info = normalize_scale_to_radius(bpy, objects, args.target_radius)
-        orient_info = orient_forward(bpy, objects, args.forward, args.yaw_deg, args.pitch_deg, args.roll_deg)
+        scale_info = normalize_scale_to_radius(bpy, objects, target_radius, asset_id=args.id)
+        orient_info = orient_forward(bpy, objects, args.forward, pitch_deg, yaw_deg, roll_deg, rotation_configured)
         export_glb(bpy, output, objects)
         emit({
             "status": "exported",

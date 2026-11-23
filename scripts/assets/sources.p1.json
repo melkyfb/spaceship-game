@@ -4,14 +4,16 @@
     "source": "assets/spaceship-player/SpaceShip.fbx",
     "output": "client/public/assets/models/ships/player_ship.glb",
     "targetRadius": 2.2,
-    "forward": "-Z"
+    "forward": "-Z",
+    "rotationDeg": [0, 0, 0]
   },
   {
     "id": "missile",
     "source": "assets/missile/cgtrader_optimized_Roket2.fbx",
     "output": "client/public/assets/models/projectiles/missile.glb",
     "targetRadius": 0.6,
-    "forward": "-Z"
+    "forward": "-Z",
+    "rotationDeg": [0, 0, 0]
   },
   {
     "id": "crystal_shield",
