@@ -3,6 +3,7 @@ import type { ClientMessage, ServerMessage, ShipCommand } from '@asteroids/share
 import { CockpitRig } from './CockpitRig'
 import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield } from './Starfield'
+import { SoundSynth } from '../audio/SoundSynth'
 import { AsteroidPool } from '../entities/AsteroidPool'
 import { EnemyPool } from '../entities/EnemyShip'
 import { ParticleSystem } from '../entities/ParticleSystem'
@@ -82,6 +83,14 @@ export class GameApp {
   private readonly enemyPool: EnemyPool
   private readonly shipPool: ShipPool
   private readonly particleSystem: ParticleSystem
+  private readonly soundSynth = new SoundSynth()
+  private readonly audioListenerPos = new THREE.Vector3()
+  private readonly audioListenerDir = new THREE.Vector3()
+  private readonly audioListenerUp = new THREE.Vector3()
+  private readonly audioListenerQuat = new THREE.Quaternion()
+  private readonly audioListenerPosArr: [number, number, number] = [0, 0, 0]
+  private readonly audioListenerDirArr: [number, number, number] = [0, 0, -1]
+  private readonly audioListenerUpArr: [number, number, number] = [0, 1, 0]
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -179,6 +188,10 @@ export class GameApp {
     this.pipeline.recenter()
   }
 
+  async resumeAudioFromGesture(): Promise<void> {
+    await this.soundSynth.resumeFromGesture()
+  }
+
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
@@ -216,6 +229,7 @@ export class GameApp {
     this.enemyPool.dispose()
     this.shipPool.dispose()
     this.particleSystem.dispose()
+    this.soundSynth.dispose()
     this.scene.remove(this.cockpit.root)
     this.cockpit.dispose()
     this.scene.remove(this.starfield)
@@ -242,6 +256,7 @@ export class GameApp {
     this.hud.update(this.hudState, dt)
     this.pips.update(this.hudContacts, this.camera, dt)
     this.particleSystem.update(dt)
+    this.updateAudioListener()
     this.pipeline.render(this.scene, this.camera)
   }
 
@@ -276,6 +291,7 @@ export class GameApp {
       return
     }
     if (msg.t === 'EVENT') {
+      this.soundSynth.playEvent(msg)
       if (msg.kind === 'EXPLOSION' || msg.kind === 'HIT' || msg.kind === 'PLAYER_DEATH') {
         this.particleSystem.handleEvent(msg)
       }
@@ -519,6 +535,29 @@ export class GameApp {
   private resetHeadLook(): void {
     this.cockpit.pilotHeadRig.rotation.x = 0
     this.cockpit.pilotHeadRig.rotation.y = 0
+  }
+
+  private updateAudioListener(): void {
+    this.camera.getWorldPosition(this.audioListenerPos)
+    this.camera.getWorldDirection(this.audioListenerDir)
+    this.camera.getWorldQuaternion(this.audioListenerQuat)
+    this.audioListenerUp.set(0, 1, 0).applyQuaternion(this.audioListenerQuat)
+
+    this.audioListenerPosArr[0] = this.audioListenerPos.x
+    this.audioListenerPosArr[1] = this.audioListenerPos.y
+    this.audioListenerPosArr[2] = this.audioListenerPos.z
+    this.audioListenerDirArr[0] = this.audioListenerDir.x
+    this.audioListenerDirArr[1] = this.audioListenerDir.y
+    this.audioListenerDirArr[2] = this.audioListenerDir.z
+    this.audioListenerUpArr[0] = this.audioListenerUp.x
+    this.audioListenerUpArr[1] = this.audioListenerUp.y
+    this.audioListenerUpArr[2] = this.audioListenerUp.z
+
+    this.soundSynth.updateListener(
+      this.audioListenerPosArr,
+      this.audioListenerDirArr,
+      this.audioListenerUpArr,
+    )
   }
 
   private resize(): void {
