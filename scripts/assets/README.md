@@ -84,3 +84,16 @@ Manual checklist:
 - Keep gameplay pivot at center; normalize to gameplay radii (`ASTEROID_TIERS.*.radius`, `SHIP_CONFIG.RADIUS`).
 - Forward gameplay axis is **-Z** for ships/missiles.
 - Prefer procedural fallback on any asset failure; missing GLBs must not crash gameplay.
+
+## P1 export status (2026-11-23)
+
+Automated export attempted with Blender 5.3.0 (`BLENDER_BIN`/auto-detected Windows path).
+
+| Asset | Status | Output | Reason |
+|---|---|---|---|
+| `player_ship` | exported | `client/public/assets/models/ships/player_ship.glb` | 887,576 bytes; normalized to targetRadius 2.2, -Z forward. |
+| `missile` | exported | `client/public/assets/models/projectiles/missile.glb` | 270,416 bytes; normalized to targetRadius 0.6, -Z forward. |
+| `crystal_shield` | manual | `client/public/assets/models/pickups/crystal_shield.glb` | `nodeFilter "Shield"` matched no mesh objects; available: `Crystal:LP_005`, `LP_005`, `Crystal_set_OBJ:polySurface1`. |
+| `crystal_energy` | manual | `client/public/assets/models/pickups/crystal_energy.glb` | `nodeFilter "Energy"` matched no mesh objects; available: `Crystal:LP_005`, `LP_005`, `Crystal_set_OBJ:polySurface1`. |
+
+Re-run: `node scripts/assets/export-glb.mjs --only p1 --report scripts/assets/out/export-report.json` (report is gitignored under `scripts/assets/out/`).

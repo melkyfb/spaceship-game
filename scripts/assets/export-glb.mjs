@@ -103,7 +103,7 @@ function runBlenderExport(blender, item) {
     '--source', sourcePath,
     '--output', outputPath,
   ]
-  if (item.forward) args.push('--forward', String(item.forward))
+  if (item.forward) args.push(`--forward=${String(item.forward)}`)
   if (Number.isFinite(item.targetRadius)) args.push('--target-radius', String(item.targetRadius))
   if (item.nodeFilter) args.push('--node-filter', String(item.nodeFilter))
   if (Array.isArray(item.rotationDeg) && item.rotationDeg.length === 3) {
