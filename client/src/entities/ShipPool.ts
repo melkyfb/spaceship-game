@@ -52,6 +52,39 @@ export class ShipPool {
     this.mesh.instanceMatrix.needsUpdate = true
   }
 
+  updateWithInterpolation(
+    ships: readonly ShipState[],
+    localPlayerId: string | null,
+    renderTime: number,
+    sampleInto: (
+      id: string | number,
+      serverTime: number,
+      out: { pos: [number, number, number]; rot: [number, number, number, number] },
+    ) => boolean,
+    scratch: { pos: [number, number, number]; rot: [number, number, number, number] },
+  ): void {
+    const capacity = this.mesh.instanceMatrix.count
+    let count = 0
+    for (let i = 0; i < ships.length && count < capacity; i++) {
+      const s = ships[i]
+      if (s === undefined) continue
+      if (localPlayerId !== null && s.id === localPlayerId) continue
+      if (!s.alive) continue
+      if (sampleInto(s.id, renderTime, scratch)) {
+        this.scratchPos.set(scratch.pos[0], scratch.pos[1], scratch.pos[2])
+        this.scratchQuat.set(scratch.rot[0], scratch.rot[1], scratch.rot[2], scratch.rot[3])
+      } else {
+        this.scratchPos.set(s.pos[0], s.pos[1], s.pos[2])
+        this.scratchQuat.set(s.rot[0], s.rot[1], s.rot[2], s.rot[3])
+      }
+      this.scratchMatrix.compose(this.scratchPos, this.scratchQuat, this.scratchScale)
+      this.mesh.setMatrixAt(count, this.scratchMatrix)
+      count++
+    }
+    this.mesh.count = count
+    this.mesh.instanceMatrix.needsUpdate = true
+  }
+
   dispose(): void {
     this.group.remove(this.mesh)
     this.mesh.geometry.dispose()

@@ -140,9 +140,11 @@ export class GameApp {
   private spectatorOrbitAngle = 0
   private currentRunScore = 0
   private currentRunWave = 1
+  private currentLeaderboardRank: number | null = null
   private bestRecordedRank: number | null = null
   private bestRecordedScore: number | null = null
   private lastRecordedScoreForRun: number | null = null
+  private lastRecordedScoreKey: string | null = null
   private pendingQuitToMenu = false
   private pingTimerSec = 0
 
@@ -369,6 +371,7 @@ export class GameApp {
     this.updateNetworkTimers(dt)
     this.sendInputBatch()
     this.applySnapshotIfAny()
+    this.updateMultiplayerRenderFrame()
     if (this.deathActive) this.updateDeath(dt)
     const starCenter = this.deathActive ? this.camera.position : this.cockpit.root.position
     recenterStarfield(this.starfield, starCenter)
@@ -462,9 +465,11 @@ export class GameApp {
     this.killerTarget = null
     this.currentRunScore = 0
     this.currentRunWave = 1
+    this.currentLeaderboardRank = null
     this.bestRecordedRank = null
     this.bestRecordedScore = null
     this.lastRecordedScoreForRun = null
+    this.lastRecordedScoreKey = null
     this.pendingQuitToMenu = false
     this.pingTimerSec = 0
     this.lastLocalShield = 100
@@ -520,12 +525,12 @@ export class GameApp {
 
   private refreshLocalLeaderboardHud(): void {
     const entries = loadLocalLeaderboard()
-    this.applyLocalBest(entries)
+    this.applyLocalBest(entries, readPlayerName())
     this.leaderboardHud.update({
       title: 'Top 10 - Treinamento',
       entries: entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
       current: {
-        rank: null,
+        rank: this.currentLeaderboardRank,
         name: readPlayerName() || 'Pilot',
         score: this.currentRunScore,
         bestRank: this.bestRecordedRank,
@@ -534,8 +539,18 @@ export class GameApp {
     })
   }
 
-  private applyLocalBest(entries: RankedLocalLeaderboardEntry[]): void {
-    const best = entries[0]
+  private applyLocalBest(entries: RankedLocalLeaderboardEntry[], playerName?: string): void {
+    const name = (playerName ?? readPlayerName()).trim().toLowerCase()
+    let best: RankedLocalLeaderboardEntry | undefined
+    if (name.length > 0) {
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]
+        if (e !== undefined && e.name.trim().toLowerCase() === name) {
+          best = e
+          break // entries are sorted desc by score
+        }
+      }
+    }
     if (best !== undefined) {
       this.bestRecordedRank = best.rank
       this.bestRecordedScore = best.score
@@ -559,13 +574,17 @@ export class GameApp {
 
     if (this.mode === 'TRAINING' && shouldRecordScore(this.currentRunScore) && this.lastRecordedScoreForRun !== this.currentRunScore) {
       const name = readPlayerName() || 'Pilot'
-      recordLocalScore({
-        name,
-        score: this.currentRunScore,
-        wave: this.currentRunWave,
-        createdAt: new Date().toISOString(),
-      })
-      this.lastRecordedScoreForRun = this.currentRunScore
+      const scoreKey = `${this.localPlayerId ?? 'p1'}:${this.currentRunScore}:${this.currentRunWave}`
+      if (this.lastRecordedScoreKey !== scoreKey) {
+        recordLocalScore({
+          name,
+          score: this.currentRunScore,
+          wave: this.currentRunWave,
+          createdAt: new Date().toISOString(),
+        })
+        this.lastRecordedScoreKey = scoreKey
+        this.lastRecordedScoreForRun = this.currentRunScore
+      }
     }
 
     if (this.transportReady) {
@@ -601,14 +620,23 @@ export class GameApp {
     if (msg.t === 'LEADERBOARD') {
       const current = msg.current
       if (current) {
-        this.bestRecordedRank = current.rank
-        this.bestRecordedScore = current.score
+        if (typeof current.rank === 'number' && Number.isFinite(current.rank)) {
+          this.currentLeaderboardRank = current.rank
+          if (this.bestRecordedRank === null || current.rank < this.bestRecordedRank) {
+            this.bestRecordedRank = current.rank
+          }
+        }
+        if (typeof current.score === 'number' && Number.isFinite(current.score)) {
+          if (this.bestRecordedScore === null || current.score > this.bestRecordedScore) {
+            this.bestRecordedScore = current.score
+          }
+        }
       }
       this.leaderboardHud.update({
         title: this.mode === 'MULTIPLAYER' ? 'Top 10 - Multiplayer' : 'Top 10 - Treinamento',
         entries: msg.entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
         current: {
-          rank: current?.rank ?? null,
+          rank: this.currentLeaderboardRank,
           name: readPlayerName() || 'Pilot',
           score: this.currentRunScore,
           bestRank: this.bestRecordedRank,
@@ -630,9 +658,19 @@ export class GameApp {
 
     if (msg.kind === 'SCORE_RECORDED') {
       if (msg.playerId === this.localPlayerId) {
+        const scoreKey = `${msg.playerId}:${msg.score}:${msg.wave}`
+        if (this.lastRecordedScoreKey === scoreKey) return
+
+        this.lastRecordedScoreKey = scoreKey
         this.lastRecordedScoreForRun = msg.score
-        if (typeof msg.rank === 'number') this.bestRecordedRank = msg.rank
+        if (typeof msg.rank === 'number' && Number.isFinite(msg.rank)) {
+          this.currentLeaderboardRank = msg.rank
+          if (this.bestRecordedRank === null || msg.rank < this.bestRecordedRank) {
+            this.bestRecordedRank = msg.rank
+          }
+        }
         if (msg.score > (this.bestRecordedScore ?? -1)) this.bestRecordedScore = msg.score
+
         if (this.mode === 'TRAINING') {
           const entries = recordLocalScore({
             name: msg.name,
@@ -640,11 +678,11 @@ export class GameApp {
             wave: msg.wave,
             createdAt: new Date().toISOString(),
           })
-          this.applyLocalBest(entries)
+          this.applyLocalBest(entries, msg.name)
           this.leaderboardHud.update({
             entries: entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
             current: {
-              rank: null,
+              rank: this.currentLeaderboardRank,
               name: readPlayerName() || msg.name,
               score: this.currentRunScore,
               bestRank: this.bestRecordedRank,
@@ -654,7 +692,7 @@ export class GameApp {
         } else {
           this.leaderboardHud.update({
             current: {
-              rank: null,
+              rank: this.currentLeaderboardRank,
               name: readPlayerName() || msg.name,
               score: this.currentRunScore,
               bestRank: this.bestRecordedRank,
@@ -891,7 +929,6 @@ export class GameApp {
 
   private getLocalDisplayShip(authoritative: ShipState): ShipState {
     if (this.mode !== 'MULTIPLAYER' || !this.predictedLocalShip) return authoritative
-    this.predictor.decayCorrection(0)
     this.predictor.getDisplayState(this.predictedLocalShip, this.displayLocalShip)
     // Keep authoritative non-physics HUD/identity fields.
     this.displayLocalShip.shield = authoritative.shield
@@ -902,10 +939,41 @@ export class GameApp {
     return this.displayLocalShip
   }
 
+  private updateMultiplayerRenderFrame(): void {
+    if (this.mode !== 'MULTIPLAYER') return
+    const snap = this.latestSnapshot
+    if (snap === null) return
+
+    const renderTime = this.clockSync.serverNow()
+    this.shipPool.updateWithInterpolation(
+      snap.ships,
+      this.localPlayerId,
+      renderTime,
+      (id, serverTime, out) => this.interpolator.sampleInto(id, serverTime, out),
+      this.interpShipState,
+    )
+
+    if (this.deathActive) return
+    const predicted = this.predictedLocalShip
+    if (!predicted || !predicted.alive) return
+    this.predictor.getDisplayState(predicted, this.displayLocalShip)
+    this.cockpit.root.position.set(
+      this.displayLocalShip.pos[0],
+      this.displayLocalShip.pos[1],
+      this.displayLocalShip.pos[2],
+    )
+    this.cockpit.root.quaternion.set(
+      this.displayLocalShip.rot[0],
+      this.displayLocalShip.rot[1],
+      this.displayLocalShip.rot[2],
+      this.displayLocalShip.rot[3],
+    )
+  }
+
   private refreshLeaderboardHudCurrent(): void {
     this.leaderboardHud.update({
       current: {
-        rank: null,
+        rank: this.currentLeaderboardRank,
         name: readPlayerName() || 'Pilot',
         score: this.currentRunScore,
         bestRank: this.bestRecordedRank,
@@ -919,6 +987,7 @@ export class GameApp {
     this.deathElapsedSec = 0
     this.killerTarget = null
     this.lastRecordedScoreForRun = null
+    this.lastRecordedScoreKey = null
     this.respawnOverlay.hide()
     this.restoreCockpitCamera()
   }
