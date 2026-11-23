@@ -226,26 +226,42 @@ export class AsteroidPool {
     }
   }
 
-  dispose(): void {
+  setAsteroidTemplates(templatesByTier: Partial<Record<AsteroidSize, THREE.Object3D[]>>): void {
     const tierNames: AsteroidSize[] = ['LARGE', 'MEDIUM', 'SMALL']
     for (let i = 0; i < tierNames.length; i++) {
       const tier = tierNames[i]!
-      const state = this.tiers[tier]
-      if (state.mode === 'instanced' && state.mesh) {
-        this.group.remove(state.mesh)
-        state.mesh.geometry.dispose()
-        ;(state.mesh.material as THREE.Material).dispose()
-        state.mesh = null
-      } else {
-        for (let s = 0; s < state.slots.length; s++) {
-          const slot = state.slots[s]!
-          for (let v = 0; v < slot.variants.length; v++) {
-            disposeObject3D(slot.variants[v]!)
-          }
-          this.group.remove(slot.group)
+      const capacity = this.tiers[tier].capacity
+      this.disposeTier(tier)
+      const templates = templatesByTier[tier]
+      this.tiers[tier] = templates && templates.length > 0
+        ? this.initTemplateTier(tier, templates, capacity)
+        : this.initInstancedTier(tier, capacity)
+    }
+  }
+
+  private disposeTier(tier: AsteroidSize): void {
+    const state = this.tiers[tier]
+    if (state.mode === 'instanced' && state.mesh) {
+      this.group.remove(state.mesh)
+      state.mesh.geometry.dispose()
+      ;(state.mesh.material as THREE.Material).dispose()
+      state.mesh = null
+    } else {
+      for (let s = 0; s < state.slots.length; s++) {
+        const slot = state.slots[s]!
+        for (let v = 0; v < slot.variants.length; v++) {
+          disposeObject3D(slot.variants[v]!)
         }
-        state.slots.length = 0
+        this.group.remove(slot.group)
       }
+      state.slots.length = 0
+    }
+  }
+
+  dispose(): void {
+    const tierNames: AsteroidSize[] = ['LARGE', 'MEDIUM', 'SMALL']
+    for (let i = 0; i < tierNames.length; i++) {
+      this.disposeTier(tierNames[i]!)
     }
     this.group.parent?.remove(this.group)
   }

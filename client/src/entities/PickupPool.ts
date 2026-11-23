@@ -94,6 +94,37 @@ export class PickupPool {
     }
   }
 
+  setPickupTemplates(templates: Partial<Record<PickupKind, THREE.Object3D>>): void {
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i]!
+      for (let k = 0; k < PICKUP_KINDS.length; k++) {
+        disposeObject3D(slot.byKind[PICKUP_KINDS[k]!])
+      }
+      this.group.remove(slot.group)
+    }
+    this.slots.length = 0
+
+    for (let i = 0; i < this.capacity; i++) {
+      const group = new THREE.Group()
+      group.name = `PickupSlot_${i}`
+      group.visible = false
+      group.scale.setScalar(PICKUP_VISUAL_RADIUS)
+
+      const byKind = {} as Record<PickupKind, THREE.Object3D>
+      for (let k = 0; k < PICKUP_KINDS.length; k++) {
+        const kind = PICKUP_KINDS[k]!
+        const template = templates[kind]
+        const obj = template ? cloneTemplateObject(template) : createFallbackObject(kind)
+        obj.visible = false
+        group.add(obj)
+        byKind[kind] = obj
+      }
+
+      this.group.add(group)
+      this.slots.push({ group, byKind })
+    }
+  }
+
   update(pickups: readonly PickupState[], dtSec: number): void {
     const dt = Number.isFinite(dtSec) ? dtSec : 0
     this.time += dt

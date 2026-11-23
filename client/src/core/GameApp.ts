@@ -6,7 +6,7 @@ import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield, recenterStarfield } from './Starfield'
 import { SoundSynth } from '../audio/SoundSynth'
 import { AssetLoader } from '../assets/AssetLoader'
-import { ASSET_MANIFEST } from '../assets/manifest'
+import { ASSET_MANIFEST, getP1AssetUrls } from '../assets/manifest'
 import { normalizeObjectToRadius } from '../assets/model-utils'
 import { AsteroidPool } from '../entities/AsteroidPool'
 import { EnemyPool } from '../entities/EnemyShip'
@@ -250,7 +250,7 @@ export class GameApp {
     this.shipPool = new ShipPool(this.scene)
     this.pickupPool = new PickupPool(this.scene)
     this.particleSystem = new ParticleSystem(this.scene)
-    void this.preloadShipTemplate()
+    void this.preloadAssets()
 
     this.startScreen = new StartScreen({
       onTrain: (name) => {
@@ -455,7 +455,24 @@ export class GameApp {
     })
   }
 
-  private async preloadShipTemplate(): Promise<void> {
+  private async preloadAssets(): Promise<void> {
+    try {
+      await this.assetLoader.preload(getP1AssetUrls())
+    } catch (err) {
+      console.warn('[GameApp] P1 asset preload failed, using procedural fallbacks', err)
+    }
+    if (this.disposed) return
+
+    await this.wireShipTemplate()
+    if (this.disposed) return
+    await this.wireMissileTemplate()
+    if (this.disposed) return
+    await this.wirePickupTemplates()
+    if (this.disposed) return
+    await this.wireAsteroidTemplates()
+  }
+
+  private async wireShipTemplate(): Promise<void> {
     try {
       const def = ASSET_MANIFEST.playerShip
       const ship = await this.assetLoader.load(def.url)
@@ -472,6 +489,78 @@ export class GameApp {
       this.shipPool.setShipTemplate(ship)
     } catch (err) {
       console.warn('[GameApp] ship template preload failed, using fallback', err)
+    }
+  }
+
+  private async wireMissileTemplate(): Promise<void> {
+    try {
+      const missile = await this.assetLoader.load(ASSET_MANIFEST.missile.url)
+      if (!missile || this.disposed) {
+        if (missile) this.disposeLoadedObject(missile)
+        return
+      }
+      this.projectilePool.setMissileTemplate(missile)
+    } catch (err) {
+      console.warn('[GameApp] missile template preload failed, using fallback', err)
+    }
+  }
+
+  private async wirePickupTemplates(): Promise<void> {
+    try {
+      const [shield, energy] = await Promise.all([
+        this.assetLoader.load(ASSET_MANIFEST.pickups.SHIELD_CRYSTAL.url),
+        this.assetLoader.load(ASSET_MANIFEST.pickups.ENERGY_CRYSTAL.url),
+      ])
+      if (this.disposed) {
+        if (shield) this.disposeLoadedObject(shield)
+        if (energy) this.disposeLoadedObject(energy)
+        return
+      }
+      const templates: { SHIELD_CRYSTAL?: THREE.Object3D; ENERGY_CRYSTAL?: THREE.Object3D } = {}
+      if (shield) templates.SHIELD_CRYSTAL = shield
+      else console.warn('[GameApp] shield pickup template missing, using fallback')
+      if (energy) templates.ENERGY_CRYSTAL = energy
+      else console.warn('[GameApp] energy pickup template missing, using fallback')
+      if (templates.SHIELD_CRYSTAL || templates.ENERGY_CRYSTAL) {
+        this.pickupPool.setPickupTemplates(templates)
+      }
+    } catch (err) {
+      console.warn('[GameApp] pickup templates preload failed, using fallback', err)
+    }
+  }
+
+  private async wireAsteroidTemplates(): Promise<void> {
+    try {
+      const tiers = ['LARGE', 'MEDIUM', 'SMALL'] as const
+      const templatesByTier: Partial<Record<'LARGE' | 'MEDIUM' | 'SMALL', THREE.Object3D[]>> = {}
+
+      for (const tier of tiers) {
+        const defs = ASSET_MANIFEST.asteroids[tier]
+        const loaded = await Promise.all(defs.map((d) => this.assetLoader.load(d.url)))
+        if (this.disposed) {
+          for (const obj of loaded) if (obj) this.disposeLoadedObject(obj)
+          for (const tierTemplates of Object.values(templatesByTier)) {
+            for (const obj of tierTemplates ?? []) this.disposeLoadedObject(obj)
+          }
+          return
+        }
+        const templates = loaded.filter((obj): obj is THREE.Group => obj !== null)
+        if (templates.length > 0) templatesByTier[tier] = templates
+        else console.warn(`[GameApp] asteroid ${tier} templates missing, using fallback`)
+      }
+
+      if (this.disposed) {
+        for (const tierTemplates of Object.values(templatesByTier)) {
+          for (const obj of tierTemplates ?? []) this.disposeLoadedObject(obj)
+        }
+        return
+      }
+
+      if (Object.keys(templatesByTier).length > 0) {
+        this.asteroidPool.setAsteroidTemplates(templatesByTier)
+      }
+    } catch (err) {
+      console.warn('[GameApp] asteroid templates preload failed, using fallback', err)
     }
   }
 
