@@ -1,11 +1,22 @@
 import { WebSocketServer, type RawData } from 'ws';
+import { encode } from '@msgpack/msgpack';
+import { decodeClientMessage, encodeServerMessage } from './protocol';
 
-/** Normalize a ws RawData payload to a UTF-8 string before JSON parsing. */
+/** Normalize ws RawData to a UTF-8 string (legacy helper kept for compatibility). */
 export function rawDataToString(data: RawData): string {
   if (typeof data === 'string') return data;
   if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
   if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data)).toString('utf8');
   return data.toString('utf8');
+}
+
+/** Normalize ws RawData to bytes for msgpack decoding. */
+export function rawDataToBytes(data: RawData): Uint8Array {
+  if (typeof data === 'string') return Buffer.from(data, 'utf8');
+  if (Array.isArray(data)) return Buffer.concat(data);
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (Buffer.isBuffer(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  return new Uint8Array(data as ArrayBuffer);
 }
 
 /**
@@ -17,23 +28,23 @@ export function createWebSocketServer(port: number): WebSocketServer {
 
   wss.on('connection', (socket) => {
     // Greet every new client so the UI can confirm the proxy path works end to end.
-    socket.send(JSON.stringify({ t: 'hello' }));
+    socket.send(encode({ t: 'hello' }));
 
-    socket.on('message', (data) => {
-      let message: unknown;
-      try {
-        message = JSON.parse(rawDataToString(data));
-      } catch {
-        return;
-      }
+    socket.on('message', (data, isBinary) => {
+      const bytes = isBinary || typeof data !== 'string' ? rawDataToBytes(data) : null;
+      if (!bytes) return;
 
-      if (
-        typeof message === 'object' &&
-        message !== null &&
-        't' in message &&
-        (message as { t: unknown }).t === 'ping'
-      ) {
-        socket.send(JSON.stringify({ t: 'pong' }));
+      const result = decodeClientMessage(bytes);
+      if (!result.ok) return;
+
+      if (result.value.t === 'PING') {
+        socket.send(
+          encodeServerMessage({
+            t: 'PONG',
+            clientTime: result.value.clientTime,
+            serverTime: Date.now(),
+          }),
+        );
       }
     });
 
