@@ -7,7 +7,7 @@ import { createStarfield, recenterStarfield } from './Starfield'
 import { SoundSynth } from '../audio/SoundSynth'
 import { AssetLoader } from '../assets/AssetLoader'
 import { ASSET_MANIFEST, getP1AssetUrls } from '../assets/manifest'
-import { normalizeObjectToRadius } from '../assets/model-utils'
+import { disposeObjectResources, normalizeObjectToRadius } from '../assets/model-utils'
 import { AsteroidPool } from '../entities/AsteroidPool'
 import { EnemyPool } from '../entities/EnemyShip'
 import { ParticleSystem } from '../entities/ParticleSystem'
@@ -534,26 +534,23 @@ export class GameApp {
       const tiers = ['LARGE', 'MEDIUM', 'SMALL'] as const
       const templatesByTier: Partial<Record<'LARGE' | 'MEDIUM' | 'SMALL', THREE.Object3D[]>> = {}
 
-      for (const tier of tiers) {
-        const defs = ASSET_MANIFEST.asteroids[tier]
-        const loaded = await Promise.all(defs.map((d) => this.assetLoader.load(d.url)))
-        if (this.disposed) {
-          for (const obj of loaded) if (obj) this.disposeLoadedObject(obj)
-          for (const tierTemplates of Object.values(templatesByTier)) {
-            for (const obj of tierTemplates ?? []) this.disposeLoadedObject(obj)
-          }
-          return
-        }
-        const templates = loaded.filter((obj): obj is THREE.Group => obj !== null)
-        if (templates.length > 0) templatesByTier[tier] = templates
-        else console.warn(`[GameApp] asteroid ${tier} templates missing, using fallback`)
-      }
+      const entries = await Promise.all(
+        tiers.map(async (tier) => {
+          const defs = ASSET_MANIFEST.asteroids[tier]
+          const loaded = await Promise.all(defs.map((d) => this.assetLoader.load(d.url)))
+          const templates = loaded.filter((obj): obj is THREE.Group => obj !== null)
+          return { tier, templates }
+        }),
+      )
 
       if (this.disposed) {
-        for (const tierTemplates of Object.values(templatesByTier)) {
-          for (const obj of tierTemplates ?? []) this.disposeLoadedObject(obj)
-        }
+        for (const entry of entries) for (const obj of entry.templates) this.disposeLoadedObject(obj)
         return
+      }
+
+      for (const { tier, templates } of entries) {
+        if (templates.length > 0) templatesByTier[tier] = templates
+        else console.warn(`[GameApp] asteroid ${tier} templates missing, using fallback`)
       }
 
       if (Object.keys(templatesByTier).length > 0) {
@@ -565,14 +562,7 @@ export class GameApp {
   }
 
   private disposeLoadedObject(obj: THREE.Object3D): void {
-    obj.traverse((node) => {
-      const mesh = node as THREE.Mesh
-      if (!mesh.isMesh) return
-      mesh.geometry?.dispose()
-      const mat = mesh.material
-      if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
-      else mat?.dispose()
-    })
+    disposeObjectResources(obj, { textures: false })
   }
 
   private resetSessionState(): void {

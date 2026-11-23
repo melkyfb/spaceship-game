@@ -20,9 +20,16 @@ Automated export attempted with `node scripts/assets/export-glb.mjs --only p1 --
 | `missile` | exported | `client/public/assets/models/projectiles/missile.glb` | Exported (270,416 bytes). Normalized to `targetRadius=0.6`, forward `-Z`, `rotationDeg=[0,0,0]`. Blender warnings: some texture images had no size/could not be exported; verify material appearance in-game. |
 | `crystal_shield` | manual | `client/public/assets/models/pickups/crystal_shield.glb` | `nodeFilter "Shield"` matched no mesh objects in `assets/crystal/Crystals_Set/Files/Crystals_Set_FBX.fbx`. Available meshes: `Crystal:LP_005`, `LP_005`, `Crystal_set_OBJ:polySurface1`. Manual DCC selection/mapping required before export. |
 | `crystal_energy` | manual | `client/public/assets/models/pickups/crystal_energy.glb` | `nodeFilter "Energy"` matched no mesh objects in `assets/crystal/Crystals_Set/Files/Crystals_Set_FBX.fbx`. Available meshes: `Crystal:LP_005`, `LP_005`, `Crystal_set_OBJ:polySurface1`. Manual DCC selection/mapping required before export. |
+| `asteroid_large_01` | exported | `client/public/assets/models/asteroids/asteroid_large_01.glb` | Exported (37,816 bytes). Source `Aster_Small_1_` from `Asteroid_Small_6X.blend`; normalized to `targetRadius=14`, `rotationDeg=[0,0,0]`. Reuses small-pack variant for large tier; visual validation PENDENTE. |
+| `asteroid_large_02` | exported | `client/public/assets/models/asteroids/asteroid_large_02.glb` | Exported (40,192 bytes). Source `Aster_Small_2_`; `targetRadius=14`, `rotationDeg=[0,0,0]`. Visual validation PENDENTE. |
+| `asteroid_medium_01` | exported | `client/public/assets/models/asteroids/asteroid_medium_01.glb` | Exported (36,900 bytes). Source `Aster_Small_3_`; `targetRadius=7`, `rotationDeg=[0,0,0]`. Visual validation PENDENTE. |
+| `asteroid_medium_02` | exported | `client/public/assets/models/asteroids/asteroid_medium_02.glb` | Exported (33,640 bytes). Source `Aster_Small_4_`; `targetRadius=7`, `rotationDeg=[0,0,0]`. Visual validation PENDENTE. |
+| `asteroid_small_01` | exported | `client/public/assets/models/asteroids/asteroid_small_01.glb` | Exported (37,772 bytes). Source `Aster_Small_5_`; `targetRadius=3`, `rotationDeg=[0,0,0]`. Visual validation PENDENTE. |
+| `asteroid_small_02` | exported | `client/public/assets/models/asteroids/asteroid_small_02.glb` | Exported (44,512 bytes). Source `Aster_Small_6_`; `targetRadius=3`, `rotationDeg=[0,0,0]`. Visual validation PENDENTE. |
 
 Notes:
 - No GLBs were faked. Crystal outputs were not produced.
+- Asteroid GLBs were exported via Blender 5.3.0 in this fix wave using nodeFilter per mesh from `Asteroid_Small_6X.blend`. The same small-pack geometry is reused across LARGE/MEDIUM/SMALL tiers with different targetRadius; this is an honest mapping, not a per-tier art pass. Visual validation remains PENDENTE.
 - `scripts/assets/out/export-report.json` is generated/gitignored; regenerate with the command above.
 - A small export-script fix was applied: pass `--forward=-Z` form to Blender argparse to avoid `-Z` being parsed as a flag.
 - Raw `assets/` remains untracked and must not be committed.

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { PickupState } from '@asteroids/shared'
-import { normalizeObjectToRadius } from '../assets/model-utils'
+import { disposeObjectResources, normalizeObjectToRadius } from '../assets/model-utils'
 
 export type PickupKind = 'SHIELD_CRYSTAL' | 'ENERGY_CRYSTAL'
 
@@ -73,6 +73,7 @@ export class PickupPool {
     this.group.name = 'PickupPool'
     scene.add(this.group)
 
+    const ingestedTemplates = new Set<THREE.Object3D>()
     for (let i = 0; i < this.capacity; i++) {
       const group = new THREE.Group()
       group.name = `PickupSlot_${i}`
@@ -83,6 +84,7 @@ export class PickupPool {
       for (let k = 0; k < PICKUP_KINDS.length; k++) {
         const kind = PICKUP_KINDS[k]!
         const template = opts.templates?.[kind]
+        if (template) ingestedTemplates.add(template)
         const obj = template ? cloneTemplateObject(template) : createFallbackObject(kind)
         obj.visible = false
         group.add(obj)
@@ -92,6 +94,7 @@ export class PickupPool {
       this.group.add(group)
       this.slots.push({ group, byKind })
     }
+    for (const t of ingestedTemplates) disposeObjectResources(t, { textures: false })
   }
 
   setPickupTemplates(templates: Partial<Record<PickupKind, THREE.Object3D>>): void {
@@ -104,6 +107,7 @@ export class PickupPool {
     }
     this.slots.length = 0
 
+    const ingestedTemplates = new Set<THREE.Object3D>()
     for (let i = 0; i < this.capacity; i++) {
       const group = new THREE.Group()
       group.name = `PickupSlot_${i}`
@@ -114,6 +118,7 @@ export class PickupPool {
       for (let k = 0; k < PICKUP_KINDS.length; k++) {
         const kind = PICKUP_KINDS[k]!
         const template = templates[kind]
+        if (template) ingestedTemplates.add(template)
         const obj = template ? cloneTemplateObject(template) : createFallbackObject(kind)
         obj.visible = false
         group.add(obj)
@@ -123,6 +128,7 @@ export class PickupPool {
       this.group.add(group)
       this.slots.push({ group, byKind })
     }
+    for (const t of ingestedTemplates) disposeObjectResources(t, { textures: false })
   }
 
   update(pickups: readonly PickupState[], dtSec: number): void {

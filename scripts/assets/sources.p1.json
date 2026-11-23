@@ -28,5 +28,59 @@
     "output": "client/public/assets/models/pickups/crystal_energy.glb",
     "targetRadius": 2.0,
     "nodeFilter": "Energy"
+  },
+  {
+    "id": "asteroid_large_01",
+    "source": "assets/Asteroid_pack_small/Asteroid_pack_small/Asteroid_Small_6X.blend",
+    "output": "client/public/assets/models/asteroids/asteroid_large_01.glb",
+    "targetRadius": 14,
+    "forward": "-Z",
+    "rotationDeg": [0, 0, 0],
+    "nodeFilter": "Aster_Small_1"
+  },
+  {
+    "id": "asteroid_large_02",
+    "source": "assets/Asteroid_pack_small/Asteroid_pack_small/Asteroid_Small_6X.blend",
+    "output": "client/public/assets/models/asteroids/asteroid_large_02.glb",
+    "targetRadius": 14,
+    "forward": "-Z",
+    "rotationDeg": [0, 0, 0],
+    "nodeFilter": "Aster_Small_2"
+  },
+  {
+    "id": "asteroid_medium_01",
+    "source": "assets/Asteroid_pack_small/Asteroid_pack_small/Asteroid_Small_6X.blend",
+    "output": "client/public/assets/models/asteroids/asteroid_medium_01.glb",
+    "targetRadius": 7,
+    "forward": "-Z",
+    "rotationDeg": [0, 0, 0],
+    "nodeFilter": "Aster_Small_3"
+  },
+  {
+    "id": "asteroid_medium_02",
+    "source": "assets/Asteroid_pack_small/Asteroid_pack_small/Asteroid_Small_6X.blend",
+    "output": "client/public/assets/models/asteroids/asteroid_medium_02.glb",
+    "targetRadius": 7,
+    "forward": "-Z",
+    "rotationDeg": [0, 0, 0],
+    "nodeFilter": "Aster_Small_4"
+  },
+  {
+    "id": "asteroid_small_01",
+    "source": "assets/Asteroid_pack_small/Asteroid_pack_small/Asteroid_Small_6X.blend",
+    "output": "client/public/assets/models/asteroids/asteroid_small_01.glb",
+    "targetRadius": 3,
+    "forward": "-Z",
+    "rotationDeg": [0, 0, 0],
+    "nodeFilter": "Aster_Small_5"
+  },
+  {
+    "id": "asteroid_small_02",
+    "source": "assets/Asteroid_pack_small/Asteroid_pack_small/Asteroid_Small_6X.blend",
+    "output": "client/public/assets/models/asteroids/asteroid_small_02.glb",
+    "targetRadius": 3,
+    "forward": "-Z",
+    "rotationDeg": [0, 0, 0],
+    "nodeFilter": "Aster_Small_6"
   }
 ]

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { SHIP_CONFIG, type ShipState } from '@asteroids/shared'
+import { centerObjectToOrigin, disposeObjectResources } from '../assets/model-utils'
 
 export const SHIP_CAPACITY = 8
 
@@ -106,9 +107,24 @@ export class ShipPool {
         if (Array.isArray(mesh.material)) mesh.material = mesh.material.map((m) => m.clone())
         else if (mesh.material) mesh.material = mesh.material.clone()
       })
+      centerObjectToOrigin(clone)
+      // Bake centering offset into children so runtime position writes on the clone root
+      // do not undo the pivot correction.
+      const ox = clone.position.x, oy = clone.position.y, oz = clone.position.z
+      if (ox !== 0 || oy !== 0 || oz !== 0) {
+        for (const child of clone.children) {
+          child.position.x += ox
+          child.position.y += oy
+          child.position.z += oz
+        }
+        clone.position.set(0, 0, 0)
+      }
       this.group.add(clone)
       this.templatePool.push(clone)
     }
+    // Pool clones geometry/materials but shares texture references; dispose non-texture resources
+    // of the ingested template to avoid leaking the original scene graph.
+    disposeObjectResources(template, { textures: false })
   }
 
   update(ships: readonly ShipState[], localPlayerId: string | null): void {

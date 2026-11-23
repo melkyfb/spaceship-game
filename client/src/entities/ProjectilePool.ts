@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { ProjectileState } from '@asteroids/shared'
+import { disposeObjectResources, normalizeObjectToRadius } from '../assets/model-utils'
 
 export const PROJECTILE_CAPACITY = 256
 export const MISSILE_VISUAL_CAPACITY = 32
@@ -36,34 +37,6 @@ function cloneTemplateObject(template: THREE.Object3D): THREE.Object3D {
   return clone
 }
 
-function normalizeMissileTemplate(obj: THREE.Object3D): void {
-  const box = new THREE.Box3().setFromObject(obj)
-  const center = new THREE.Vector3()
-  box.getCenter(center)
-  obj.position.sub(center)
-
-  box.setFromObject(obj)
-  const sphere = new THREE.Sphere()
-  box.getBoundingSphere(sphere)
-  const r = sphere.radius
-  if (r > 1e-6) {
-    const s = 1 / r
-    obj.scale.multiplyScalar(s)
-    obj.position.multiplyScalar(s)
-  }
-}
-
-function disposeObject3D(obj: THREE.Object3D): void {
-  obj.traverse((node) => {
-    const mesh = node as THREE.Mesh
-    if (!mesh.isMesh) return
-    mesh.geometry?.dispose()
-    const mat = mesh.material
-    if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
-    else if (mat) mat.dispose()
-  })
-}
-
 export class ProjectilePool {
   readonly group: THREE.Group
   private readonly mesh: THREE.InstancedMesh
@@ -75,7 +48,6 @@ export class ProjectilePool {
   private readonly scratchTarget = new THREE.Vector3()
   private readonly scratchLook = new THREE.Matrix4()
   private missileSlots: MissileSlot[] = []
-  private missileTemplate: THREE.Object3D | null = null
 
   constructor(scene: THREE.Scene, capacity = PROJECTILE_CAPACITY, opts: ProjectilePoolOptions = {}) {
     this.group = new THREE.Group()
@@ -106,11 +78,10 @@ export class ProjectilePool {
   setMissileTemplate(template: THREE.Object3D | null): void {
     for (let i = 0; i < this.missileSlots.length; i++) {
       const slot = this.missileSlots[i]!
-      disposeObject3D(slot.visual)
+      disposeObjectResources(slot.visual, { textures: false })
       this.group.remove(slot.group)
     }
     this.missileSlots = []
-    this.missileTemplate = template
 
     if (!template) return
 
@@ -119,18 +90,20 @@ export class ProjectilePool {
       group.name = `Missile_${i}`
       group.visible = false
       const visual = cloneTemplateObject(template)
-      normalizeMissileTemplate(visual)
+      normalizeObjectToRadius(visual, 1)
       group.add(visual)
       this.group.add(group)
       this.missileSlots.push({ group, visual })
     }
+    // Clones own geometry/materials; textures are shared refs, so dispose non-texture resources only.
+    disposeObjectResources(template, { textures: false })
   }
 
   update(projectiles: readonly ProjectileState[]): void {
     const instancedCapacity = this.mesh.instanceMatrix.count
     let instancedCount = 0
     let missileCount = 0
-    const useMissileTemplate = this.missileTemplate !== null && this.missileSlots.length > 0
+    const useMissileTemplate = this.missileSlots.length > 0
 
     for (let i = 0; i < projectiles.length; i++) {
       const p = projectiles[i]

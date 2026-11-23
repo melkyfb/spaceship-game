@@ -392,7 +392,7 @@ Pipeline P1 para integrar GLBs reais com fallback procedural (sem quebrar sim/de
 - **Export (dry-run):** `node scripts/assets/export-glb.mjs --dry-run`
 - **Export real:** requer Blender no PATH; o script usa `scripts/assets/blender_export.py` e `scripts/assets/sources.p1.json`. Quando Blender ausente ou nodeFilter não casa, o script deve falhar/reportar claramente; export manual/fallback documentado.
 - **Fallback:** se GLB ausente/falhar no load, o cliente usa geometria procedural existente (não crashar).
-- **Estado atual (factual):** `player_ship.glb` e `missile.glb` presentes; `crystal_shield`/`crystal_energy` pendentes por nodeFilter mismatch no FBX; asteroids P1 ainda não mapeados/exportados no `sources.p1.json`.
+- **Estado atual (factual):** `player_ship.glb`, `missile.glb` e 6 asteroid GLBs (`asteroid_{large,medium,small}_{01,02}.glb`, exportados via Blender 5.3.0 a partir de `Asteroid_Small_6X.blend`; variantes small reusadas para tiers large/medium por targetRadius, validação visual PENDENTE) presentes; `crystal_shield`/`crystal_energy` pendentes por nodeFilter mismatch no FBX.
 - **Verificação:** `docs/superpowers/specs/2026-11-23-assets-phase2-p1-verification.md` (checklist manual PENDENTE; não afirmar validação visual/dispositivo sem execução).
 
 ## Estrutura atual

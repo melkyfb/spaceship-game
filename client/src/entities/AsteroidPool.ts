@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { ASTEROID_TIERS, type AsteroidSize, type AsteroidState } from '@asteroids/shared'
+import { disposeObjectResources, normalizeObjectToRadius } from '../assets/model-utils'
 
 export const ASTEROID_CAPACITY_PER_TIER = 64
 
@@ -88,23 +89,6 @@ interface AsteroidTierState {
   capacity: number
 }
 
-function normalizeTemplateToUnit(obj: THREE.Object3D): void {
-  const box = new THREE.Box3().setFromObject(obj)
-  const center = new THREE.Vector3()
-  box.getCenter(center)
-  obj.position.sub(center)
-
-  box.setFromObject(obj)
-  const sphere = new THREE.Sphere()
-  box.getBoundingSphere(sphere)
-  const r = sphere.radius
-  if (r > 1e-6) {
-    const s = 1 / r
-    obj.scale.multiplyScalar(s)
-    obj.position.multiplyScalar(s)
-  }
-}
-
 function cloneTemplateObject(template: THREE.Object3D): THREE.Object3D {
   const clone = template.clone(true)
   clone.traverse((obj) => {
@@ -116,17 +100,6 @@ function cloneTemplateObject(template: THREE.Object3D): THREE.Object3D {
     else if (mesh.material) mesh.material = mesh.material.clone()
   })
   return clone
-}
-
-function disposeObject3D(obj: THREE.Object3D): void {
-  obj.traverse((node) => {
-    const mesh = node as THREE.Mesh
-    if (!mesh.isMesh) return
-    mesh.geometry?.dispose()
-    const mat = mesh.material
-    if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
-    else if (mat) mat.dispose()
-  })
 }
 
 export class AsteroidPool {
@@ -176,7 +149,7 @@ export class AsteroidPool {
       const variants: THREE.Object3D[] = []
       for (let v = 0; v < templates.length; v++) {
         const clone = cloneTemplateObject(templates[v]!)
-        normalizeTemplateToUnit(clone)
+        normalizeObjectToRadius(clone, 1)
         clone.visible = false
         group.add(clone)
         variants.push(clone)
@@ -184,6 +157,9 @@ export class AsteroidPool {
       this.group.add(group)
       slots.push({ group, variants })
     }
+    // Clones own geometry/materials; textures are shared refs.
+    const uniqueTemplates = new Set(templates)
+    for (const t of uniqueTemplates) disposeObjectResources(t, { textures: false })
     return { mode: 'template', mesh: null, slots, capacity }
   }
 
@@ -250,7 +226,7 @@ export class AsteroidPool {
       for (let s = 0; s < state.slots.length; s++) {
         const slot = state.slots[s]!
         for (let v = 0; v < slot.variants.length; v++) {
-          disposeObject3D(slot.variants[v]!)
+          disposeObjectResources(slot.variants[v]!, { textures: false })
         }
         this.group.remove(slot.group)
       }

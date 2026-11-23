@@ -155,4 +155,42 @@ describe('ShipPool', () => {
     expect(pool.group.parent).toBeNull()
     expect(scene.children).not.toContain(pool.group)
   })
+
+  it('centers off-center ship template at gameplay position', () => {
+    const scene = new THREE.Scene()
+    const offCenter = new THREE.Group()
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial())
+    mesh.position.set(10, -4, 3)
+    offCenter.add(mesh)
+
+    const pool = new ShipPool(scene, 2, { shipTemplate: offCenter })
+    pool.update(
+      [
+        {
+          id: 'p2',
+          pos: [100, 200, -50],
+          vel: [0, 0, 0],
+          rot: [0, 0, 0, 1],
+          angVel: [0, 0, 0],
+          shield: 100,
+          energy: 100,
+          alive: true,
+        } as any,
+      ],
+      'p1',
+    )
+
+    const visible = pool.group.children.find((c) => c.visible) as THREE.Object3D | undefined
+    expect(visible).toBeDefined()
+
+    visible!.updateWorldMatrix(true, true)
+    const box = new THREE.Box3().setFromObject(visible!)
+    const center = new THREE.Vector3()
+    box.getCenter(center)
+
+    expect(center.x).toBeCloseTo(100, 3)
+    expect(center.y).toBeCloseTo(200, 3)
+    expect(center.z).toBeCloseTo(-50, 3)
+    pool.dispose()
+  })
 })

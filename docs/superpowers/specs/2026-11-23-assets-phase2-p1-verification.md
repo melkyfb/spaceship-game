@@ -29,7 +29,7 @@ Regras/constraints confirmadas no design/plano:
 | Missile | `assets/missile/cgtrader_optimized_Roket2.fbx` | `client/public/assets/models/projectiles/missile.glb` | **Presente** (exportado) |
 | Crystal shield | `assets/crystal/Crystals_Set/Files/Crystals_Set_FBX.fbx` (`nodeFilter: Shield`) | `client/public/assets/models/pickups/crystal_shield.glb` | **Ausente** — manual pendente (nodeFilter mismatch no FBX) |
 | Crystal energy | `assets/crystal/Crystals_Set/Files/Crystals_Set_FBX.fbx` (`nodeFilter: Energy`) | `client/public/assets/models/pickups/crystal_energy.glb` | **Ausente** — manual pendente (nodeFilter mismatch no FBX) |
-| Asteroids P1 | Não mapeados em `sources.p1.json` no estado atual | `client/public/assets/models/asteroids/*.glb` (esperado pelo design) | **Ausente** — não exportados/mapeados ainda |
+| Asteroids P1 | Mapeados em `sources.p1.json` (6 variantes: large/medium/small ×2, source `assets/Asteroid_pack_small/Asteroid_pack_small/Asteroid_Small_6X.blend`, nodeFilter por `Aster_Small_1..6`) | `client/public/assets/models/asteroids/asteroid_{large,medium,small}_{01,02}.glb` | **Presente** (exportados via Blender 5.3.0 em 2026-11-23; ~34-45KB cada). Mapeamento reusa variantes do pack small para tiers large/medium por targetRadius; validação visual PENDENTE. |
 
 Observações:
 - O cliente deve usar fallback procedural para assets ausentes/falhos; isso está coberto por testes automatizados, mas **não** foi validado visualmente em dispositivo nesta sessão.
@@ -54,7 +54,7 @@ Preenchido apenas com itens realmente executados. **Não** foram executadas vali
 | --- | --- | --- | --- | --- |
 | Desktop — Treinamento com GLBs ausentes | Inicia sem crash; fallback procedural para player/asteroids/crystals/missile conforme ausência | **PENDENTE** | Não executado | Validar removendo/ocultando GLBs runtime ou em ambiente limpo. |
 | Desktop — Multiplayer com GLBs ausentes | Inicia sem crash; fluxo 0.1.0-alpha preservado | **PENDENTE** | Não executado | Requer server + dois clientes. |
-| Desktop — GLBs presentes | Orientação (-Z), escala, pivô/centro de gameplay e framerate aceitável para player/asteroids/crystals/missile | **PENDENTE** | Não executado | Apenas `player_ship.glb` e `missile.glb` presentes hoje; crystals/asteroids ainda sem GLB runtime. |
+| Desktop — GLBs presentes | Orientação (-Z), escala, pivô/centro de gameplay e framerate aceitável para player/asteroids/crystals/missile | **PENDENTE** | Não executado | `player_ship.glb`, `missile.glb` e 6 asteroid GLBs presentes; crystals shield/energy ainda sem GLB runtime (nodeFilter mismatch). |
 | 0.1.0-alpha behavior | Score apenas Multiplayer; Treinamento sem persistência local de leaderboard | **PENDENTE** | Não executado visualmente | Cobertura automatizada existente em M5/fluxos relacionados; confirmar manualmente sem regressão. |
 | Pickups visíveis | Pickups aparecem quando spawnados/dropped; fallback quando GLB ausente | **PENDENTE** | Não executado | Crystal GLBs ausentes por nodeFilter mismatch. |
 
@@ -62,14 +62,14 @@ Preenchido apenas com itens realmente executados. **Não** foram executadas vali
 
 - **Validação visual/dispositivo não executada.** Não afirmar orientação/escala/pivô/framerate em runtime real.
 - **Crystals não exportados automaticamente:** `nodeFilter` `Shield`/`Energy` não bateu no FBX; requer export manual/ajuste de filtro.
-- **Asteroids P1 não mapeados/exportados:** `sources.p1.json` cobre 4 itens; asteroids faltam no mapping/export runtime.
+- **Asteroids P1 mapeados/exportados com ressalva:** `sources.p1.json` agora inclui 6 asteroids e os GLBs foram exportados via Blender 5.3.0. O mapeamento reusa variantes do pack `Asteroid_Small_6X` para tiers LARGE/MEDIUM/SMALL por targetRadius; validação visual/manual de aparência e escala em jogo permanece PENDENTE.
 - **Build chunk grande:** chunk principal ~796 kB minificado / ~205 kB gzip (aviso Vite, não bloqueante).
 - **Ajuste de config para typecheck:** `client/tsconfig.json` recebeu `allowJs: true` para permitir import do script `.mjs` pelo teste; mudança pequena e localizada, mas deve ser considerada na revisão.
 
 ## 6. Arquivos relevantes (P1)
 
 - Pipeline/export: `scripts/assets/export-glb.mjs`, `scripts/assets/blender_export.py`, `scripts/assets/sources.p1.json`, `scripts/assets/README.md`, `scripts/assets/.gitignore`.
-- Runtime assets: `client/public/assets/models/ships/player_ship.glb`, `client/public/assets/models/projectiles/missile.glb` (presentes); pickups/asteroids pendentes.
+- Runtime assets: `client/public/assets/models/ships/player_ship.glb`, `client/public/assets/models/projectiles/missile.glb`, `client/public/assets/models/asteroids/asteroid_{large,medium,small}_{01,02}.glb` (presentes); pickups crystal shield/energy pendentes (nodeFilter mismatch).
 - Client asset/runtime wiring: `client/src/assets/*`, `client/src/entities/*`, `client/src/core/GameApp.ts` (conforme Tasks 1-9).
 - Testes relevantes: `client/test/assets/*`, `client/test/entities/*`, `client/test/gameapp-assets.test.ts`.
 - Doc: `docs/superpowers/specs/2026-11-23-assets-phase2-p1-verification.md`.

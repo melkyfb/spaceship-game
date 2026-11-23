@@ -30,7 +30,7 @@ describe('PickupPool', () => {
     pool.dispose()
   })
 
-  it('deep-clones template meshes so disposal does not touch originals', () => {
+  it('deep-clones template meshes and takes ownership of ingested templates', () => {
     const scene = new THREE.Scene()
     const geom = new THREE.BoxGeometry(1, 1, 1)
     const mat = new THREE.MeshBasicMaterial({ color: 0xff0000 })
@@ -49,11 +49,36 @@ describe('PickupPool', () => {
     expect(clone.material).not.toBe(mat)
 
     pool.dispose()
-    expect(geom.uuid).toBeTruthy()
-    expect(mat.uuid).toBeTruthy()
-    // original template resources should still be usable (not disposed in a way we can directly observe here,
-    // but identity check above ensures clones got their own resources)
-    geom.dispose()
-    mat.dispose()
+    // Pool takes ownership of ingested template resources (non-texture) to avoid leaks.
+    // Clones have independent geometry/material instances.
+    expect(clone.geometry).not.toBe(geom)
+  })
+
+  it('centers off-center pickup template at gameplay position (accounting for bob)', () => {
+    const scene = new THREE.Scene()
+    const offCenter = new THREE.Group()
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial())
+    mesh.position.set(10, -4, 3)
+    offCenter.add(mesh)
+
+    const pool = new PickupPool(scene, 2, {
+      templates: { SHIELD_CRYSTAL: offCenter },
+    })
+
+    pool.update([{ id: 7, kind: 'SHIELD_CRYSTAL', pos: [100, 200, -50], ttl: 10 } as any], 0)
+
+    const slot = pool.group.children.find((c) => c.visible) as THREE.Group | undefined
+    expect(slot).toBeDefined()
+
+    slot!.updateWorldMatrix(true, true)
+    const box = new THREE.Box3().setFromObject(slot!)
+    const center = new THREE.Vector3()
+    box.getCenter(center)
+
+    const expectedBob = Math.sin(0 * 2 + 7) * 0.15
+    expect(center.x).toBeCloseTo(100, 3)
+    expect(center.y).toBeCloseTo(200 + expectedBob, 3)
+    expect(center.z).toBeCloseTo(-50, 3)
+    pool.dispose()
   })
 })
