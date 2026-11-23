@@ -3,19 +3,76 @@ import { SHIP_CONFIG, type ShipState } from '@asteroids/shared'
 
 export const SHIP_CAPACITY = 8
 
+export interface ShipPoolOptions {
+  shipTemplate?: THREE.Object3D | null
+}
+
 export class ShipPool {
   readonly group: THREE.Group
-  private readonly mesh: THREE.InstancedMesh
+  private readonly capacity: number
+  private mode: 'instanced' | 'template'
+  private mesh: THREE.InstancedMesh | null
+  private readonly templatePool: THREE.Object3D[] = []
   private readonly scratchMatrix = new THREE.Matrix4()
   private readonly scratchPos = new THREE.Vector3()
   private readonly scratchQuat = new THREE.Quaternion()
   private readonly scratchScale = new THREE.Vector3(1, 1, 1)
 
-  constructor(scene: THREE.Scene, capacity = SHIP_CAPACITY) {
+  constructor(scene: THREE.Scene, capacity = SHIP_CAPACITY, opts: ShipPoolOptions = {}) {
     this.group = new THREE.Group()
     this.group.name = 'ShipPool'
     scene.add(this.group)
 
+    this.capacity = capacity
+    const shipTemplate = opts.shipTemplate ?? null
+    if (shipTemplate) {
+      this.mode = 'template'
+      this.mesh = null
+      this.initTemplatePool(shipTemplate, capacity)
+    } else {
+      this.mode = 'instanced'
+      this.mesh = this.initInstancedFallback(capacity)
+    }
+  }
+
+  setShipTemplate(template: THREE.Object3D | null): void {
+    if (this.mode === 'template') {
+      this.disposeTemplatePool()
+    } else if (this.mesh) {
+      this.group.remove(this.mesh)
+      this.mesh.geometry.dispose()
+      ;(this.mesh.material as THREE.Material).dispose()
+      this.mesh = null
+    }
+    if (template) {
+      this.mode = 'template'
+      this.initTemplatePool(template, this.capacity)
+    } else {
+      this.mode = 'instanced'
+      this.mesh = this.initInstancedFallback(this.capacity)
+    }
+  }
+
+  private disposeTemplatePool(): void {
+    const geometries = new Set<THREE.BufferGeometry>()
+    const materials = new Set<THREE.Material>()
+    for (const obj of this.templatePool) {
+      obj.traverse((node) => {
+        const mesh = node as THREE.Mesh
+        if (!mesh.isMesh) return
+        if (mesh.geometry) geometries.add(mesh.geometry)
+        const mat = mesh.material
+        if (Array.isArray(mat)) mat.forEach((m) => materials.add(m))
+        else if (mat) materials.add(mat)
+      })
+      this.group.remove(obj)
+    }
+    geometries.forEach((g) => g.dispose())
+    materials.forEach((m) => m.dispose())
+    this.templatePool.length = 0
+  }
+
+  private initInstancedFallback(capacity: number): THREE.InstancedMesh {
     const geometry = new THREE.ConeGeometry(SHIP_CONFIG.RADIUS * 0.7, SHIP_CONFIG.RADIUS * 2.2, 6)
     geometry.rotateX(Math.PI / 2)
     const material = new THREE.MeshStandardMaterial({
@@ -26,16 +83,43 @@ export class ShipPool {
       metalness: 0.3,
       flatShading: true,
     })
-    this.mesh = new THREE.InstancedMesh(geometry, material, capacity)
-    this.mesh.name = 'Ships'
-    this.mesh.frustumCulled = false
-    this.mesh.count = 0
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-    this.group.add(this.mesh)
+    const mesh = new THREE.InstancedMesh(geometry, material, capacity)
+    mesh.name = 'Ships'
+    mesh.frustumCulled = false
+    mesh.count = 0
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    this.group.add(mesh)
+    return mesh
+  }
+
+  private initTemplatePool(template: THREE.Object3D, capacity: number): void {
+    for (let i = 0; i < capacity; i++) {
+      const clone = template.clone(true)
+      clone.visible = false
+      clone.traverse((obj) => {
+        const mesh = obj as THREE.Mesh
+        if (!mesh.isMesh) return
+        mesh.frustumCulled = false
+        mesh.geometry = mesh.geometry.clone()
+        if (Array.isArray(mesh.material)) mesh.material = mesh.material.map((m) => m.clone())
+        else if (mesh.material) mesh.material = mesh.material.clone()
+      })
+      this.group.add(clone)
+      this.templatePool.push(clone)
+    }
   }
 
   update(ships: readonly ShipState[], localPlayerId: string | null): void {
-    const capacity = this.mesh.instanceMatrix.count
+    if (this.mesh) {
+      this.updateInstanced(ships, localPlayerId)
+      return
+    }
+    this.updateTemplate(ships, localPlayerId)
+  }
+
+  private updateInstanced(ships: readonly ShipState[], localPlayerId: string | null): void {
+    const mesh = this.mesh!
+    const capacity = this.capacity
     let count = 0
     for (let i = 0; i < ships.length && count < capacity; i++) {
       const s = ships[i]
@@ -45,11 +129,29 @@ export class ShipPool {
       this.scratchPos.set(s.pos[0], s.pos[1], s.pos[2])
       this.scratchQuat.set(s.rot[0], s.rot[1], s.rot[2], s.rot[3])
       this.scratchMatrix.compose(this.scratchPos, this.scratchQuat, this.scratchScale)
-      this.mesh.setMatrixAt(count, this.scratchMatrix)
+      mesh.setMatrixAt(count, this.scratchMatrix)
       count++
     }
-    this.mesh.count = count
-    this.mesh.instanceMatrix.needsUpdate = true
+    mesh.count = count
+    mesh.instanceMatrix.needsUpdate = true
+  }
+
+  private updateTemplate(ships: readonly ShipState[], localPlayerId: string | null): void {
+    let count = 0
+    for (let i = 0; i < ships.length && count < this.capacity; i++) {
+      const s = ships[i]
+      if (s === undefined) continue
+      if (localPlayerId !== null && s.id === localPlayerId) continue
+      if (!s.alive) continue
+      const obj = this.templatePool[count]!
+      obj.position.set(s.pos[0], s.pos[1], s.pos[2])
+      obj.quaternion.set(s.rot[0], s.rot[1], s.rot[2], s.rot[3])
+      obj.visible = true
+      count++
+    }
+    for (let i = count; i < this.templatePool.length; i++) {
+      this.templatePool[i]!.visible = false
+    }
   }
 
   updateWithInterpolation(
@@ -63,9 +165,27 @@ export class ShipPool {
     ) => boolean,
     scratch: { pos: [number, number, number]; rot: [number, number, number, number] },
   ): void {
-    const capacity = this.mesh.instanceMatrix.count
+    if (this.mesh) {
+      this.updateInstancedWithInterpolation(ships, localPlayerId, renderTime, sampleInto, scratch)
+      return
+    }
+    this.updateTemplateWithInterpolation(ships, localPlayerId, renderTime, sampleInto, scratch)
+  }
+
+  private updateInstancedWithInterpolation(
+    ships: readonly ShipState[],
+    localPlayerId: string | null,
+    renderTime: number,
+    sampleInto: (
+      id: string | number,
+      serverTime: number,
+      out: { pos: [number, number, number]; rot: [number, number, number, number] },
+    ) => boolean,
+    scratch: { pos: [number, number, number]; rot: [number, number, number, number] },
+  ): void {
+    const mesh = this.mesh!
     let count = 0
-    for (let i = 0; i < ships.length && count < capacity; i++) {
+    for (let i = 0; i < ships.length && count < this.capacity; i++) {
       const s = ships[i]
       if (s === undefined) continue
       if (localPlayerId !== null && s.id === localPlayerId) continue
@@ -78,17 +198,55 @@ export class ShipPool {
         this.scratchQuat.set(s.rot[0], s.rot[1], s.rot[2], s.rot[3])
       }
       this.scratchMatrix.compose(this.scratchPos, this.scratchQuat, this.scratchScale)
-      this.mesh.setMatrixAt(count, this.scratchMatrix)
+      mesh.setMatrixAt(count, this.scratchMatrix)
       count++
     }
-    this.mesh.count = count
-    this.mesh.instanceMatrix.needsUpdate = true
+    mesh.count = count
+    mesh.instanceMatrix.needsUpdate = true
+  }
+
+  private updateTemplateWithInterpolation(
+    ships: readonly ShipState[],
+    localPlayerId: string | null,
+    renderTime: number,
+    sampleInto: (
+      id: string | number,
+      serverTime: number,
+      out: { pos: [number, number, number]; rot: [number, number, number, number] },
+    ) => boolean,
+    scratch: { pos: [number, number, number]; rot: [number, number, number, number] },
+  ): void {
+    let count = 0
+    for (let i = 0; i < ships.length && count < this.capacity; i++) {
+      const s = ships[i]
+      if (s === undefined) continue
+      if (localPlayerId !== null && s.id === localPlayerId) continue
+      if (!s.alive) continue
+      const obj = this.templatePool[count]!
+      if (sampleInto(s.id, renderTime, scratch)) {
+        obj.position.set(scratch.pos[0], scratch.pos[1], scratch.pos[2])
+        obj.quaternion.set(scratch.rot[0], scratch.rot[1], scratch.rot[2], scratch.rot[3])
+      } else {
+        obj.position.set(s.pos[0], s.pos[1], s.pos[2])
+        obj.quaternion.set(s.rot[0], s.rot[1], s.rot[2], s.rot[3])
+      }
+      obj.visible = true
+      count++
+    }
+    for (let i = count; i < this.templatePool.length; i++) {
+      this.templatePool[i]!.visible = false
+    }
   }
 
   dispose(): void {
-    this.group.remove(this.mesh)
-    this.mesh.geometry.dispose()
-    ;(this.mesh.material as THREE.Material).dispose()
+    if (this.mesh) {
+      this.group.remove(this.mesh)
+      this.mesh.geometry.dispose()
+      ;(this.mesh.material as THREE.Material).dispose()
+      this.mesh = null
+    } else {
+      this.disposeTemplatePool()
+    }
     this.group.parent?.remove(this.group)
   }
 }
