@@ -430,7 +430,6 @@ client/
     input/               # InputManager + adapters Desktop/Touch/VRBox/QuestXR + math/mapping
     state/
       player-profile.ts    # nome (cookie) e playerToken opaco
-      leaderboard-local.ts # top 10 local (localStorage)
     ui/
       hud-math.ts        # helpers puros: radar/pip/throttle
       DiegeticHUD.ts     # CanvasTexture 512x256, dirty-flag 15Hz, radar
@@ -496,6 +495,6 @@ não aloca objetos no hot-loop (buffers pré-alocados reutilizados a cada tick).
   FPS real, conforto, áudio após gesto e balanceamento fino — tudo `PENDENTE` neste ambiente.
   Ambiguidade US-11 documentada: implementação segue `ASTEROID_TIERS`.
 - M5 / US-13..US-14: validação real em 2+ clientes/dispositivos, Treinamento offline, respawn/
-  desistir, killer camera, leaderboard local/global com restart do servidor, latência 100ms+/
+  desistir, killer camera, leaderboard global multiplayer com restart do servidor, latência 100ms+/
   perda de pacote, Quest 3/VR Box/Android — tudo `PENDENTE` nesta sessão. Não fabricar
   evidência de dispositivo/latência.

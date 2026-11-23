@@ -49,7 +49,7 @@ describe('quest-xr-mapping', () => {
 
     const full = createNeutralQuestXRState()
     mapQuestXRInput([makeSource('right', makeGamepad({ axes: [0, 0, 1, 0] }))], full)
-    expect(full.yaw).toBeCloseTo(applyResponseCurve(1, 1.6))
+    expect(full.yaw).toBeCloseTo(applyResponseCurve(-1, 1.6))
     expect(full.pitch).toBeCloseTo(0)
   })
 
@@ -154,7 +154,7 @@ describe('QuestXRInput', () => {
     const state = input.getState()
     expect(state.strafeX).toBeGreaterThan(0)
     expect(state.thrust).toBeGreaterThan(0)
-    expect(state.yaw).toBeCloseTo(applyResponseCurve(1, 1.6))
+    expect(state.yaw).toBeCloseTo(applyResponseCurve(-1, 1.6))
     expect(state.firePrimary).toBe(true)
     expect(onRecenter).not.toHaveBeenCalled()
   })

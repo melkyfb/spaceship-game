@@ -286,7 +286,7 @@ export class VRBoxInput implements InputAdapter {
     this.state.thrust = clampAxis(rt - lt)
     this.state.strafeX = clampAxis(left.x)
     this.state.strafeY = clampAxis(-left.y)
-    this.state.yaw = clampAxis(applyResponseCurve(clampAxis(right.x), RESPONSE_EXPONENT))
+    this.state.yaw = clampAxis(applyResponseCurve(clampAxis(-right.x), RESPONSE_EXPONENT))
     this.state.pitch = clampAxis(applyResponseCurve(clampAxis(-right.y), RESPONSE_EXPONENT))
     this.state.roll = 0
     this.state.firePrimary = readButtonPressed(buttons[0]) || rt > 0.5
@@ -307,7 +307,7 @@ export class VRBoxInput implements InputAdapter {
     this.state.thrust = clampAxis(move.y)
     this.state.strafeX = clampAxis(move.x)
     this.state.strafeY = 0
-    this.state.yaw = clampAxis(applyResponseCurve(clampAxis(look.x), RESPONSE_EXPONENT))
+    this.state.yaw = clampAxis(applyResponseCurve(clampAxis(-look.x), RESPONSE_EXPONENT))
     this.state.pitch = clampAxis(applyResponseCurve(clampAxis(look.y), RESPONSE_EXPONENT))
     this.state.roll = 0
     this.state.firePrimary = this.readMappedButton(gp, m.buttons.firePrimary)

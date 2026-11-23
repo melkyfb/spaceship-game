@@ -412,9 +412,9 @@ export class TouchInput implements InputAdapter {
       this.state.thrust = 0
     }
 
-    // Right joystick: rotação (x -> yaw, y -> pitch; screen up = positive pitch)
+    // Right joystick: rotação (x -> yaw, y -> pitch; seguir cursor: direita = yaw negativo/fisicamente direita)
     if (this.rightActive) {
-      this.state.yaw = clampAxis(applyResponseCurve(this.right.x, RESPONSE_EXPONENT))
+      this.state.yaw = clampAxis(applyResponseCurve(-this.right.x, RESPONSE_EXPONENT))
       this.state.pitch = clampAxis(applyResponseCurve(-this.right.y, RESPONSE_EXPONENT))
     } else {
       this.state.yaw = 0

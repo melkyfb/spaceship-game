@@ -185,7 +185,7 @@ export class DesktopInput implements InputAdapter {
     this.mouseDX = 0
     this.mouseDY = 0
 
-    const rawYaw = clampAxis(mdx * MOUSE_SENSITIVITY)
+    const rawYaw = clampAxis(-mdx * MOUSE_SENSITIVITY)
     const rawPitch = clampAxis(-mdy * MOUSE_SENSITIVITY)
     const mouseYaw = applyResponseCurve(rawYaw, RESPONSE_EXPONENT)
     const mousePitch = applyResponseCurve(rawPitch, RESPONSE_EXPONENT)
@@ -307,7 +307,7 @@ export class DesktopInput implements InputAdapter {
     out.thrust = clamp01Signed(rt - lt)
     out.strafeX = clampAxis(leftStick.x)
     out.strafeY = clampAxis(-leftStick.y)
-    out.yaw = applyResponseCurve(clampAxis(rightStick.x), RESPONSE_EXPONENT)
+    out.yaw = applyResponseCurve(clampAxis(-rightStick.x), RESPONSE_EXPONENT)
     out.pitch = applyResponseCurve(clampAxis(-rightStick.y), RESPONSE_EXPONENT)
     out.roll = rollLeft === rollRight ? 0 : rollRight ? 1 : -1
     out.firePrimary = readGamepadButtonPressed(buttons[0]) || rt > 0.5

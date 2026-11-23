@@ -94,7 +94,7 @@ describe('DesktopInput', () => {
     target.emit('mousemove', { movementX: 100, movementY: -50 })
     input.poll()
     const state = input.getState()
-    const expectedYaw = applyResponseCurve(Math.max(-1, Math.min(1, 100 * 0.0025)), 1.6)
+    const expectedYaw = applyResponseCurve(Math.max(-1, Math.min(1, -100 * 0.0025)), 1.6)
     const expectedPitch = applyResponseCurve(Math.max(-1, Math.min(1, 50 * 0.0025)), 1.6)
     expect(state.yaw).toBeCloseTo(expectedYaw)
     expect(state.pitch).toBeCloseTo(expectedPitch)
@@ -183,7 +183,7 @@ describe('DesktopInput', () => {
     expect(state.thrust).toBe(1)
     expect(state.firePrimary).toBe(true)
     const rightStick = applyRadialDeadzone(0.5, -0.5, 0.15)
-    const expectedYaw = applyResponseCurve(rightStick.x, 1.6)
+    const expectedYaw = applyResponseCurve(-rightStick.x, 1.6)
     const expectedPitch = applyResponseCurve(-rightStick.y, 1.6)
     expect(state.yaw).toBeCloseTo(expectedYaw)
     expect(state.pitch).toBeCloseTo(expectedPitch)
@@ -212,7 +212,7 @@ describe('DesktopInput', () => {
     expect(state.strafeX).toBe(1) // keyboard
     expect(state.firePrimary).toBe(true) // gamepad
     const rightStick = applyRadialDeadzone(0.5, -0.5, 0.15)
-    expect(state.yaw).toBeCloseTo(applyResponseCurve(rightStick.x, 1.6))
+    expect(state.yaw).toBeCloseTo(applyResponseCurve(-rightStick.x, 1.6))
     expect(state.pitch).toBeCloseTo(applyResponseCurve(-rightStick.y, 1.6))
     input.dispose()
   })

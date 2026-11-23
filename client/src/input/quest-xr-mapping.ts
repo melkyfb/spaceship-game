@@ -102,9 +102,9 @@ export function mapQuestXRInput(
     }
 
     if (source.handedness === 'right') {
-      // Rotação: stick X = yaw, stick Y = pitch (up = -Y), curve 1.6
+      // Rotação: stick X = yaw, stick Y = pitch (up = -Y), curve 1.6; seguir cursor: direita = yaw negativo
       applyRadialDeadzone(readAxis(axes, 2), readAxis(axes, 3), DEADZONE, stickScratch)
-      out.yaw = clampAxis(applyResponseCurve(clampAxis(stickScratch.x), RESPONSE_EXPONENT))
+      out.yaw = clampAxis(applyResponseCurve(clampAxis(-stickScratch.x), RESPONSE_EXPONENT))
       out.pitch = clampAxis(applyResponseCurve(clampAxis(-stickScratch.y), RESPONSE_EXPONENT))
 
       // Triggers: trigger (btn 0) = firePrimary, squeeze (btn 1) = fireSecondary/missile

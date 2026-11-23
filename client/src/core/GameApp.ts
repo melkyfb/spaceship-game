@@ -21,11 +21,6 @@ import { LocalTransport } from '../net/LocalTransport'
 import { Predictor } from '../net/Predictor'
 import { WsTransport } from '../net/WsTransport'
 import type { ITransport } from '../net/ITransport'
-import {
-  loadLocalLeaderboard,
-  recordLocalScore,
-  type RankedLocalLeaderboardEntry,
-} from '../state/leaderboard-local'
 import { readPlayerName, readPlayerToken, writePlayerName, writePlayerToken } from '../state/player-profile'
 import { DiegeticHUD } from '../ui/DiegeticHUD'
 import { LeaderboardHud } from '../ui/LeaderboardHud'
@@ -275,7 +270,7 @@ export class GameApp {
     this.startScreen.update({
       name: readPlayerName(),
       mode: 'TRAINING',
-      entries: loadLocalLeaderboard().map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
+      entries: [],
     })
     this.startScreen.show()
 
@@ -515,20 +510,15 @@ export class GameApp {
   }
 
   private refreshStartScreenLeaderboard(mode: StartScreenMode): void {
-    if (mode === 'TRAINING') {
-      const entries = loadLocalLeaderboard().map((e) => ({ rank: e.rank, name: e.name, score: e.score }))
-      this.startScreen.update({ mode, entries })
-      return
-    }
+    // 0.1.0-alpha: only multiplayer leaderboard is displayed.
     this.startScreen.update({ mode, entries: [] })
   }
 
   private refreshLocalLeaderboardHud(): void {
-    const entries = loadLocalLeaderboard()
-    this.applyLocalBest(entries, readPlayerName())
+    // 0.1.0-alpha: training has no local score persistence; show multiplayer-only board shell.
     this.leaderboardHud.update({
-      title: 'Top 10 - Treinamento',
-      entries: entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
+      title: 'Top 10 - Multiplayer',
+      entries: [],
       current: {
         rank: this.currentLeaderboardRank,
         name: readPlayerName() || 'Pilot',
@@ -537,27 +527,6 @@ export class GameApp {
         bestScore: this.bestRecordedScore,
       },
     })
-  }
-
-  private applyLocalBest(entries: RankedLocalLeaderboardEntry[], playerName?: string): void {
-    const name = (playerName ?? readPlayerName()).trim().toLowerCase()
-    let best: RankedLocalLeaderboardEntry | undefined
-    if (name.length > 0) {
-      for (let i = 0; i < entries.length; i++) {
-        const e = entries[i]
-        if (e !== undefined && e.name.trim().toLowerCase() === name) {
-          best = e
-          break // entries are sorted desc by score
-        }
-      }
-    }
-    if (best !== undefined) {
-      this.bestRecordedRank = best.rank
-      this.bestRecordedScore = best.score
-    } else {
-      this.bestRecordedRank = null
-      this.bestRecordedScore = null
-    }
   }
 
   private requestRespawn(): void {
@@ -572,20 +541,7 @@ export class GameApp {
       return
     }
 
-    if (this.mode === 'TRAINING' && shouldRecordScore(this.currentRunScore) && this.lastRecordedScoreForRun !== this.currentRunScore) {
-      const name = readPlayerName() || 'Pilot'
-      const scoreKey = `${this.localPlayerId ?? 'p1'}:${this.currentRunScore}:${this.currentRunWave}`
-      if (this.lastRecordedScoreKey !== scoreKey) {
-        recordLocalScore({
-          name,
-          score: this.currentRunScore,
-          wave: this.currentRunWave,
-          createdAt: new Date().toISOString(),
-        })
-        this.lastRecordedScoreKey = scoreKey
-        this.lastRecordedScoreForRun = this.currentRunScore
-      }
-    }
+    // 0.1.0-alpha: only multiplayer score is persisted/shown; training run is not recorded locally.
 
     if (this.transportReady) {
       try {
@@ -633,7 +589,7 @@ export class GameApp {
         }
       }
       this.leaderboardHud.update({
-        title: this.mode === 'MULTIPLAYER' ? 'Top 10 - Multiplayer' : 'Top 10 - Treinamento',
+        title: 'Top 10 - Multiplayer',
         entries: msg.entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
         current: {
           rank: this.currentLeaderboardRank,
@@ -671,35 +627,16 @@ export class GameApp {
         }
         if (msg.score > (this.bestRecordedScore ?? -1)) this.bestRecordedScore = msg.score
 
-        if (this.mode === 'TRAINING') {
-          const entries = recordLocalScore({
-            name: msg.name,
-            score: msg.score,
-            wave: msg.wave,
-            createdAt: new Date().toISOString(),
-          })
-          this.applyLocalBest(entries, msg.name)
-          this.leaderboardHud.update({
-            entries: entries.map((e) => ({ rank: e.rank, name: e.name, score: e.score })),
-            current: {
-              rank: this.currentLeaderboardRank,
-              name: readPlayerName() || msg.name,
-              score: this.currentRunScore,
-              bestRank: this.bestRecordedRank,
-              bestScore: this.bestRecordedScore,
-            },
-          })
-        } else {
-          this.leaderboardHud.update({
-            current: {
-              rank: this.currentLeaderboardRank,
-              name: readPlayerName() || msg.name,
-              score: this.currentRunScore,
-              bestRank: this.bestRecordedRank,
-              bestScore: this.bestRecordedScore,
-            },
-          })
-        }
+        // 0.1.0-alpha: only multiplayer score is persisted/shown.
+        this.leaderboardHud.update({
+          current: {
+            rank: this.currentLeaderboardRank,
+            name: readPlayerName() || msg.name,
+            score: this.currentRunScore,
+            bestRank: this.bestRecordedRank,
+            bestScore: this.bestRecordedScore,
+          },
+        })
       }
       return
     }
