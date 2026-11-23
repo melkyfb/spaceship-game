@@ -55,7 +55,7 @@ pnpm -C server dev        # servidor WebSocket autoritativo em ws://localhost:80
 pnpm -C server build      # tsc -p tsconfig.json --noEmit (checagem; sem emissão)
 pnpm -C server typecheck  # tsc -p tsconfig.json --noEmit (strict + noUncheckedIndexedAccess)
 pnpm -C server test       # node:test via tsx: protocolo, RoomManager/ServerRoom, LeaderboardStore, WS
-``
+```
 
 ### Raiz do workspace (aplica o script a todos os pacotes via `pnpm -r`)
 
