@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import type { AsteroidState } from '@asteroids/shared'
-import { ASTEROID_CAPACITY_PER_TIER, syncAsteroidTier } from '../../src/entities/AsteroidPool'
+import { AsteroidPool, ASTEROID_CAPACITY_PER_TIER, pickAsteroidVariantIndex, syncAsteroidTier } from '../../src/entities/AsteroidPool'
 
 function makeAsteroid(id: number, x: number, y: number, z: number, size: AsteroidState['size'] = 'LARGE'): AsteroidState {
   return {
@@ -102,4 +102,37 @@ describe('syncAsteroidTier', () => {
   it('exports per-tier capacity constant', () => {
     expect(ASTEROID_CAPACITY_PER_TIER).toBeGreaterThan(0)
   })
+})
+
+it('picks deterministic variant by asteroid id', () => {
+  expect(pickAsteroidVariantIndex(10, 3)).toBe(pickAsteroidVariantIndex(10, 3))
+  expect(pickAsteroidVariantIndex(10, 3)).toBeGreaterThanOrEqual(0)
+  expect(pickAsteroidVariantIndex(10, 3)).toBeLessThan(3)
+})
+
+it('uses template pool per tier when templates provided and hides unused slots', () => {
+  const scene = new THREE.Scene()
+  const makeTpl = () => {
+    const g = new THREE.Group()
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial()))
+    return g
+  }
+  const pool = new AsteroidPool(scene, 4, {
+    templatesByTier: {
+      LARGE: [makeTpl(), makeTpl()],
+      MEDIUM: [makeTpl()],
+      SMALL: [makeTpl()],
+    },
+  })
+  pool.update([
+    makeAsteroid(10, 1, 2, 3, 'LARGE'),
+    makeAsteroid(11, 4, 5, 6, 'SMALL'),
+  ])
+  const largeSlots = pool.group.children.filter((c) => c.name.startsWith('Asteroid_LARGE_'))
+  const smallSlots = pool.group.children.filter((c) => c.name.startsWith('Asteroid_SMALL_'))
+  expect(largeSlots).toHaveLength(4)
+  expect(smallSlots).toHaveLength(4)
+  expect(largeSlots.filter((c) => c.visible)).toHaveLength(1)
+  expect(smallSlots.filter((c) => c.visible)).toHaveLength(1)
+  pool.dispose()
 })
