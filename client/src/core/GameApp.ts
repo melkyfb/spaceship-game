@@ -1,23 +1,30 @@
 import * as THREE from 'three'
+import type { ClientMessage, ServerMessage, ShipCommand } from '@asteroids/shared'
 import { CockpitRig } from './CockpitRig'
 import { RenderPipeline, type RenderMode } from './RenderPipeline'
 import { createStarfield } from './Starfield'
+import { AsteroidPool } from '../entities/AsteroidPool'
+import { EnemyPool } from '../entities/EnemyShip'
+import { ParticleSystem } from '../entities/ParticleSystem'
+import { ProjectilePool } from '../entities/ProjectilePool'
+import { ShipPool } from '../entities/ShipPool'
 import { DesktopInput } from '../input/DesktopInput'
 import { InputManager } from '../input/InputManager'
 import { QuestXRInput } from '../input/QuestXRInput'
 import { TouchInput } from '../input/TouchInput'
 import { VRBoxInput } from '../input/VRBoxInput'
+import { LocalTransport } from '../net/LocalTransport'
+import type { ITransport } from '../net/ITransport'
 import { DiegeticHUD } from '../ui/DiegeticHUD'
 import { OffscreenPips } from '../ui/OffscreenPips'
 import type { Contact, HudState } from '../ui/hud-math'
 
 const STAR_COUNT = 2000
 const STARFIELD_SPIN_RAD_PER_SEC = 0.006
-/** Dados mock isolados para validar HUD/radar/pips (substituíveis por estado real). */
-const MOCK_CONTACT_COUNT = 8
-const MOCK_WAVE_SECONDS = 12
 const FREE_LOOK_MAX_YAW = 1.2
 const FREE_LOOK_MAX_PITCH = 0.8
+const MAX_HUD_CONTACTS = 16
+const COMMAND_BUFFER_SIZE = 6
 
 function isMobileTouchDevice(): boolean {
   if (typeof navigator === 'undefined') return false
@@ -41,9 +48,10 @@ export class GameApp {
   private readonly pipeline: RenderPipeline
   private readonly hud: DiegeticHUD
   private readonly pips: OffscreenPips
-  private readonly mockState: HudState
-  private readonly mockContacts: Contact[] = []
-  private mockTime = 0
+  private readonly hudState: HudState
+  private readonly hudContacts: Contact[] = []
+  private readonly contactPool: Contact[] = []
+
   private readonly clock = new THREE.Clock()
   private readonly inputManager = new InputManager()
   private readonly desktopInput = new DesktopInput()
@@ -59,6 +67,21 @@ export class GameApp {
   private inputSyncToken = 0
   private running = false
   private disposed = false
+
+  private readonly transport: ITransport
+  private unsubscribeTransport: (() => void) | null = null
+  private localPlayerId: string | null = null
+  private commandTick = 1
+  private readonly commandBuffer: ShipCommand[] = []
+  private readonly inputBatchMsg: { t: 'INPUT_BATCH'; cmds: ShipCommand[] } = { t: 'INPUT_BATCH', cmds: [] }
+  private latestSnapshot: (ServerMessage & { t: 'SNAPSHOT' }) | null = null
+  private appliedSnapshot: (ServerMessage & { t: 'SNAPSHOT' }) | null = null
+
+  private readonly asteroidPool: AsteroidPool
+  private readonly projectilePool: ProjectilePool
+  private readonly enemyPool: EnemyPool
+  private readonly shipPool: ShipPool
+  private readonly particleSystem: ParticleSystem
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -97,24 +120,33 @@ export class GameApp {
 
     // Iluminação mínima; brilho neste projeto vem de emissivos/Fresnel, não de bloom (ADR-04).
     this.scene.add(new THREE.AmbientLight(0x334466, 1))
+    this.scene.add(new THREE.DirectionalLight(0xffffff, 0.35))
 
     this.starfield = createStarfield(STAR_COUNT)
     this.scene.add(this.starfield)
 
-    // HUD diegético + pips alimentados por estado mock (isolado para M3/M4).
-    for (let i = 0; i < MOCK_CONTACT_COUNT; i++) {
-      this.mockContacts.push({ position: { x: 0, y: 0, z: 0 } })
+    for (let i = 0; i < MAX_HUD_CONTACTS; i++) {
+      this.contactPool.push({ position: { x: 0, y: 0, z: 0 } })
     }
-    this.mockState = {
+    this.hudState = {
       shield: 1,
       energy: 1,
       score: 0,
       wave: 1,
-      contacts: this.mockContacts,
+      contacts: this.hudContacts,
     }
     this.hud = new DiegeticHUD(this.cockpit.hudMesh)
     this.pips = new OffscreenPips(this.cockpit.offscreenPips)
-    this.updateMockState(0)
+
+    this.asteroidPool = new AsteroidPool(this.scene)
+    this.projectilePool = new ProjectilePool(this.scene)
+    this.enemyPool = new EnemyPool(this.scene)
+    this.shipPool = new ShipPool(this.scene)
+    this.particleSystem = new ParticleSystem(this.scene)
+
+    this.transport = new LocalTransport()
+    this.unsubscribeTransport = this.transport.onMessage((msg) => this.handleServerMessage(msg))
+    void this.connectTransport()
 
     window.addEventListener('resize', this.handleResize)
     this.resize()
@@ -153,6 +185,9 @@ export class GameApp {
     this.running = false
     this.renderer.setAnimationLoop(null)
     window.removeEventListener('resize', this.handleResize)
+    this.unsubscribeTransport?.()
+    this.unsubscribeTransport = null
+    this.transport.close()
     this.inputManager.dispose()
     if (this.desktopInputAttached) {
       this.desktopInput.detach()
@@ -175,6 +210,11 @@ export class GameApp {
     this.pipeline.dispose()
     this.hud.dispose()
     this.pips.dispose()
+    this.asteroidPool.dispose()
+    this.projectilePool.dispose()
+    this.enemyPool.dispose()
+    this.shipPool.dispose()
+    this.particleSystem.dispose()
     this.scene.remove(this.cockpit.root)
     this.cockpit.dispose()
     this.scene.remove(this.starfield)
@@ -194,11 +234,13 @@ export class GameApp {
     const dt = this.clock.getDelta()
     this.starfield.rotation.y += dt * STARFIELD_SPIN_RAD_PER_SEC
     this.inputManager.update(dt)
+    this.sendInputBatch()
+    this.applySnapshotIfAny()
     this.applyFreeLook()
     this.cockpit.update(dt)
-    this.updateMockState(dt)
-    this.hud.update(this.mockState, dt)
-    this.pips.update(this.mockContacts, this.camera, dt)
+    this.hud.update(this.hudState, dt)
+    this.pips.update(this.hudContacts, this.camera, dt)
+    this.particleSystem.update(dt)
     this.pipeline.render(this.scene, this.camera)
   }
 
@@ -208,6 +250,127 @@ export class GameApp {
 
   getVRBoxInput(): VRBoxInput {
     return this.vrBoxInput
+  }
+
+  private async connectTransport(): Promise<void> {
+    try {
+      await this.transport.connect()
+      if (this.disposed) return
+      const join: ClientMessage = { t: 'JOIN', roomId: 'solo', name: 'Player', platform: 'PC' }
+      this.transport.send(join)
+    } catch (err) {
+      console.warn('[game] transport connect failed', err)
+    }
+  }
+
+  private handleServerMessage(msg: ServerMessage): void {
+    if (this.disposed) return
+    if (msg.t === 'WELCOME') {
+      this.localPlayerId = msg.playerId
+      return
+    }
+    if (msg.t === 'SNAPSHOT') {
+      this.latestSnapshot = msg
+      return
+    }
+    if (msg.t === 'EVENT') {
+      if (msg.kind === 'EXPLOSION' || msg.kind === 'HIT' || msg.kind === 'PLAYER_DEATH') {
+        this.particleSystem.handleEvent(msg)
+      }
+    }
+  }
+
+  private sendInputBatch(): void {
+    // Send commands with redundancy; GameRoom ignores old ticks.
+    const cmd = this.inputManager.getCommand(this.commandTick)
+    this.commandTick += 1
+
+    this.commandBuffer.push(cmd)
+    if (this.commandBuffer.length > COMMAND_BUFFER_SIZE) {
+      this.commandBuffer.shift()
+    }
+
+    this.inputBatchMsg.cmds = this.commandBuffer
+    this.transport.send(this.inputBatchMsg)
+  }
+
+  private applySnapshotIfAny(): void {
+    const snap = this.latestSnapshot
+    if (snap === null || snap === this.appliedSnapshot) return
+    this.appliedSnapshot = snap
+
+    this.asteroidPool.update(snap.asteroids)
+    this.projectilePool.update(snap.projectiles)
+    this.enemyPool.update(snap.enemies)
+    this.shipPool.update(snap.ships, this.localPlayerId)
+    this.updateHudFromSnapshot(snap)
+  }
+
+  private updateHudFromSnapshot(snap: ServerMessage & { t: 'SNAPSHOT' }): void {
+    let local = snap.ships[0]
+    if (this.localPlayerId !== null) {
+      for (let i = 0; i < snap.ships.length; i++) {
+        const s = snap.ships[i]
+        if (s !== undefined && s.id === this.localPlayerId) {
+          local = s
+          break
+        }
+      }
+    }
+
+    if (local !== undefined) {
+      this.hudState.shield = Math.max(0, local.shield / 100)
+      this.hudState.energy = Math.max(0, local.energy / 100)
+      this.hudState.score = local.score
+    }
+    this.hudState.wave = snap.wave
+
+    this.updateContacts(snap)
+  }
+
+  private updateContacts(snap: ServerMessage & { t: 'SNAPSHOT' }): void {
+    let count = 0
+    const max = MAX_HUD_CONTACTS
+
+    for (let i = 0; i < snap.asteroids.length && count < max; i++) {
+      const a = snap.asteroids[i]
+      if (a === undefined) continue
+      const c = this.contactPool[count]
+      if (c === undefined) break
+      c.position.x = a.pos[0]
+      c.position.y = a.pos[1]
+      c.position.z = a.pos[2]
+      this.hudContacts[count] = c
+      count++
+    }
+
+    for (let i = 0; i < snap.enemies.length && count < max; i++) {
+      const e = snap.enemies[i]
+      if (e === undefined) continue
+      const c = this.contactPool[count]
+      if (c === undefined) break
+      c.position.x = e.pos[0]
+      c.position.y = e.pos[1]
+      c.position.z = e.pos[2]
+      this.hudContacts[count] = c
+      count++
+    }
+
+    // Also include other ships as contacts (rare in solo, cheap to support).
+    for (let i = 0; i < snap.ships.length && count < max; i++) {
+      const s = snap.ships[i]
+      if (s === undefined) continue
+      if (this.localPlayerId !== null && s.id === this.localPlayerId) continue
+      const c = this.contactPool[count]
+      if (c === undefined) break
+      c.position.x = s.pos[0]
+      c.position.y = s.pos[1]
+      c.position.z = s.pos[2]
+      this.hudContacts[count] = c
+      count++
+    }
+
+    this.hudContacts.length = count
   }
 
   private async syncInputForMode(mode: RenderMode): Promise<void> {
@@ -353,27 +516,6 @@ export class GameApp {
   private resetHeadLook(): void {
     this.cockpit.pilotHeadRig.rotation.x = 0
     this.cockpit.pilotHeadRig.rotation.y = 0
-  }
-
-  /** Estado mínimo e determinístico; sem alocações no loop. */
-  private updateMockState(dt: number): void {
-    this.mockTime += dt
-    const t = this.mockTime
-    this.mockState.shield = 0.6 + 0.4 * Math.sin(t * 0.7)
-    this.mockState.energy = 0.5 + 0.5 * Math.sin(t * 1.1 + 1)
-    this.mockState.score = Math.floor(t * 10)
-    this.mockState.wave = 1 + Math.floor(t / MOCK_WAVE_SECONDS)
-
-    for (let i = 0; i < MOCK_CONTACT_COUNT; i++) {
-      const contact: Contact | undefined = this.mockContacts[i]
-      if (contact === undefined) continue
-      const phase = (i / MOCK_CONTACT_COUNT) * 2 * Math.PI
-      const radius = 35 + (i % 3) * 12
-      const angle = phase + t * (0.25 + (i % 4) * 0.08)
-      contact.position.x = Math.cos(angle) * radius
-      contact.position.y = Math.sin(angle * 0.6 + phase) * 8
-      contact.position.z = Math.sin(angle) * radius
-    }
   }
 
   private resize(): void {
