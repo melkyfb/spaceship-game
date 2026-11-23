@@ -90,10 +90,19 @@ interface AsteroidTierState {
 
 function normalizeTemplateToUnit(obj: THREE.Object3D): void {
   const box = new THREE.Box3().setFromObject(obj)
+  const center = new THREE.Vector3()
+  box.getCenter(center)
+  obj.position.sub(center)
+
+  box.setFromObject(obj)
   const sphere = new THREE.Sphere()
   box.getBoundingSphere(sphere)
   const r = sphere.radius
-  if (r > 1e-6) obj.scale.multiplyScalar(1 / r)
+  if (r > 1e-6) {
+    const s = 1 / r
+    obj.scale.multiplyScalar(s)
+    obj.position.multiplyScalar(s)
+  }
 }
 
 function cloneTemplateObject(template: THREE.Object3D): THREE.Object3D {

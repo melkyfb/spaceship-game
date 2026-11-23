@@ -136,3 +136,64 @@ it('uses template pool per tier when templates provided and hides unused slots',
   expect(smallSlots.filter((c) => c.visible)).toHaveLength(1)
   pool.dispose()
 })
+
+it('pickAsteroidVariantIndex handles edge cases', () => {
+  expect(pickAsteroidVariantIndex(0, 0)).toBe(0)
+  expect(pickAsteroidVariantIndex(-7, 3)).toBe(Math.abs(-7) % 3)
+  expect(pickAsteroidVariantIndex(-7, 3)).toBeGreaterThanOrEqual(0)
+  expect(pickAsteroidVariantIndex(-7, 3)).toBeLessThan(3)
+})
+
+it('falls back to instanced mesh for tiers without templates', () => {
+  const scene = new THREE.Scene()
+  const tpl = new THREE.Group()
+  tpl.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial()))
+  const pool = new AsteroidPool(scene, 4, {
+    templatesByTier: { LARGE: [tpl] },
+  })
+
+  pool.update([
+    makeAsteroid(1, 0, 0, 0, 'LARGE'),
+    makeAsteroid(2, 5, 0, 0, 'MEDIUM'),
+  ])
+
+  const largeSlots = pool.group.children.filter((c) => c.name.startsWith('Asteroid_LARGE_'))
+  const mediumMesh = pool.group.children.find((c) => c.name === 'Asteroids_MEDIUM') as THREE.InstancedMesh | undefined
+  expect(largeSlots).toHaveLength(4)
+  expect(mediumMesh).toBeDefined()
+  expect(mediumMesh?.count).toBe(1)
+  pool.dispose()
+})
+
+it('centers off-center templates at asteroid gameplay position', () => {
+  const scene = new THREE.Scene()
+  const offCenter = new THREE.Group()
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial())
+  mesh.position.set(10, -4, 3)
+  offCenter.add(mesh)
+
+  const pool = new AsteroidPool(scene, 2, {
+    templatesByTier: {
+      LARGE: [offCenter],
+      MEDIUM: [offCenter],
+      SMALL: [offCenter],
+    },
+  })
+
+  pool.update([makeAsteroid(42, 100, 200, -50, 'LARGE')])
+
+  const visibleSlot = pool.group.children.find(
+    (c) => c.name.startsWith('Asteroid_LARGE_') && c.visible,
+  ) as THREE.Object3D | undefined
+  expect(visibleSlot).toBeDefined()
+
+  visibleSlot!.updateWorldMatrix(true, true)
+  const box = new THREE.Box3().setFromObject(visibleSlot!)
+  const center = new THREE.Vector3()
+  box.getCenter(center)
+
+  expect(center.x).toBeCloseTo(100, 3)
+  expect(center.y).toBeCloseTo(200, 3)
+  expect(center.z).toBeCloseTo(-50, 3)
+  pool.dispose()
+})
