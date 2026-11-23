@@ -224,7 +224,7 @@ describe('GameRoom', () => {
     expect(distToAst).toBeGreaterThanOrEqual(14 + 2.2 - 0.05)
   })
 
-  it('emits PLAYER_DEATH and WAVE_CLEAR events in focused scenarios', () => {
+  it('emits PLAYER_DEATH, sets gameOver, and WAVE_CLEAR events in focused scenarios', () => {
     const deathRoom = new GameRoom({
       seed: 77,
       playerId: 'p1',
@@ -248,11 +248,22 @@ describe('GameRoom', () => {
       }
     }
     expect(sawDeath).toBe(true)
+    const deathSnap = deathRoom.createSnapshot()
+    if (!isSnapshot(deathSnap)) throw new Error('expected snapshot')
+    expect(deathSnap.gameOver).toBe(true)
+    expect(deathSnap.ships[0]?.alive).toBe(false)
+    const tickBefore = deathSnap.tick
+    deathRoom.enqueue([makeCmd(999, { thrust: 1, firePrimary: true })])
+    deathRoom.stepFixed()
+    const afterSnap = deathRoom.createSnapshot()
+    if (!isSnapshot(afterSnap)) throw new Error('expected snapshot')
+    expect(afterSnap.tick).toBe(tickBefore + 1)
+    expect(afterSnap.gameOver).toBe(true)
 
     // WAVE_CLEAR: aim at nearest enemy and fire.
     let sawWaveClear = false
     {
-      const room = new GameRoom({ seed: 7, playerId: 'p1', playerName: 'Pilot', platform: 'PC' })
+      const room = new GameRoom({ seed: 7, playerId: 'p1', playerName: 'Pilot', platform: 'PC', gameOverOnDeath: false })
       for (let i = 1; i <= 12000; i++) {
         const snap = room.createSnapshot()
         let yaw = 0

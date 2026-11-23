@@ -27,6 +27,8 @@ export interface GameRoomOptions {
   initialAsteroids?: AsteroidState[]
   initialWave?: number
   spawnInitialWave?: boolean
+  /** When true (default), solo player death ends the run instead of respawning. */
+  gameOverOnDeath?: boolean
 }
 
 interface ShipRuntime {
@@ -199,8 +201,10 @@ export class GameRoom {
   private readonly shipPrevVel: [number, number, number][] = []
   private readonly shipSweep: ShipState[] = []
   private readonly autoWaves: boolean
+  private readonly gameOverOnDeath: boolean
   private readonly forwardScratch: [number, number, number] = [0, 0, -1]
   private readonly hitScratch: HitResult = { hit: false, t: 0, nx: 0, ny: 0, nz: 0 }
+  private gameOver = false
 
   readonly snapshotIntervalTicks = WORLD_CONFIG.FIXED_TICK_RATE / WORLD_CONFIG.NETWORK_BROADCAST_RATE
   private snapshotAccum = 0
@@ -218,6 +222,7 @@ export class GameRoom {
     const seed = Number.isFinite(opts.seed) ? Math.trunc(opts.seed as number) : 1
     this.rng = makeRng(seed)
     this.autoWaves = opts.spawnInitialWave !== false
+    this.gameOverOnDeath = opts.gameOverOnDeath !== false
 
     const playerId = opts.playerId ?? 'p1'
     const playerName = opts.playerName ?? 'Player'
@@ -318,10 +323,15 @@ export class GameRoom {
         ship.lastProcessedTick = cmd.tick
       } else {
         ship.lastProcessedTick = Math.max(ship.lastProcessedTick, cmd.tick)
-        // Respawn timer handling
-        ship.invulnTimer = Math.max(0, ship.invulnTimer - FIXED_DT)
-        if (ship.invulnTimer <= 0) {
-          this.respawnShip(ship)
+        if (this.gameOverOnDeath) {
+          ship.vel[0] = 0; ship.vel[1] = 0; ship.vel[2] = 0
+          ship.angVel[0] = 0; ship.angVel[1] = 0; ship.angVel[2] = 0
+        } else {
+          // Respawn timer handling for non-game-over modes/tests.
+          ship.invulnTimer = Math.max(0, ship.invulnTimer - FIXED_DT)
+          if (ship.invulnTimer <= 0) {
+            this.respawnShip(ship)
+          }
         }
       }
     }
@@ -383,6 +393,7 @@ export class GameRoom {
       projectiles,
       pickups,
       wave: this.waveManager.currentWave,
+      gameOver: this.gameOver,
     }
   }
 
@@ -1062,8 +1073,11 @@ export class GameRoom {
     ship.shield = 0
     ship.vel[0] = 0; ship.vel[1] = 0; ship.vel[2] = 0
     ship.angVel[0] = 0; ship.angVel[1] = 0; ship.angVel[2] = 0
-    ship.invulnTimer = WORLD_CONFIG.RESPAWN_DELAY_SEC
+    ship.invulnTimer = this.gameOverOnDeath ? 0 : WORLD_CONFIG.RESPAWN_DELAY_SEC
     this.emitEvent('PLAYER_DEATH', [ship.pos[0], ship.pos[1], ship.pos[2]], 2)
+    if (this.gameOverOnDeath && this.ships.length <= 1) {
+      this.gameOver = true
+    }
   }
 
   private respawnShip(ship: ShipState): void {

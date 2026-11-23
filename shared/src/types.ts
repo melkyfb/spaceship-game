@@ -91,6 +91,7 @@ export type ServerMessage =
       projectiles: ProjectileState[];
       pickups: PickupState[];
       wave: number;
+      gameOver?: boolean;
     }
   | {
       t: 'EVENT';

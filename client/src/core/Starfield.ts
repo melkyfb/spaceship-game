@@ -4,6 +4,7 @@ import * as THREE from 'three'
 const STARFIELD_SEED = 0x5eed1234
 const INNER_RADIUS = 300
 const OUTER_RADIUS = 1200
+const STAR_WRAP_HALF_SIZE = 1000
 
 /** mulberry32: tiny deterministic PRNG, so no `Math.random` and reproducible output. */
 function createRng(seed: number): () => number {
@@ -53,4 +54,36 @@ export function createStarfield(count: number): THREE.Points<THREE.BufferGeometr
   stars.name = 'Starfield'
   stars.frustumCulled = false
   return stars
+}
+
+function wrapAxis(value: number, center: number, halfSize: number): number {
+  const size = halfSize * 2
+  const rel = value - center + halfSize
+  const wrapped = ((rel % size) + size) % size
+  return wrapped - halfSize + center
+}
+
+/** Keeps the star shell centered around the camera so travel produces visible parallax. */
+export function recenterStarfield(
+  stars: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>,
+  center: THREE.Vector3,
+): void {
+  const attr = stars.geometry.getAttribute('position') as THREE.BufferAttribute
+  const arr = attr.array as Float32Array
+  let changed = false
+  for (let i = 0; i < arr.length; i += 3) {
+    const x = arr[i]!
+    const y = arr[i + 1]!
+    const z = arr[i + 2]!
+    const nx = wrapAxis(x, center.x, STAR_WRAP_HALF_SIZE)
+    const ny = wrapAxis(y, center.y, STAR_WRAP_HALF_SIZE)
+    const nz = wrapAxis(z, center.z, STAR_WRAP_HALF_SIZE)
+    if (nx !== x || ny !== y || nz !== z) {
+      arr[i] = nx
+      arr[i + 1] = ny
+      arr[i + 2] = nz
+      changed = true
+    }
+  }
+  if (changed) attr.needsUpdate = true
 }

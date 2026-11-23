@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ClientMessage, ServerMessage, ShipCommand } from '@asteroids/shared'
 import { CockpitRig } from './CockpitRig'
 import { RenderPipeline, type RenderMode } from './RenderPipeline'
-import { createStarfield } from './Starfield'
+import { createStarfield, recenterStarfield } from './Starfield'
 import { SoundSynth } from '../audio/SoundSynth'
 import { AsteroidPool } from '../entities/AsteroidPool'
 import { EnemyPool } from '../entities/EnemyShip'
@@ -68,6 +68,17 @@ export class GameApp {
   private inputSyncToken = 0
   private running = false
   private disposed = false
+  private shakeTimeRemaining = 0
+  private shakeDuration = 0
+  private shakeIntensity = 0
+  private lastLocalShield = 100
+  private gameOver = false
+  private spectatorActive = false
+  private readonly spectatorTargetPos = new THREE.Vector3()
+  private readonly spectatorDesiredPos = new THREE.Vector3()
+  private readonly spectatorLookAt = new THREE.Vector3()
+  private readonly spectatorTmp = new THREE.Vector3()
+  private readonly gameOverOverlay: HTMLDivElement
 
   private readonly transport: ITransport
   private unsubscribeTransport: (() => void) | null = null
@@ -147,6 +158,23 @@ export class GameApp {
     }
     this.hud = new DiegeticHUD(this.cockpit.hudMesh)
     this.pips = new OffscreenPips(this.cockpit.offscreenPips)
+
+    this.gameOverOverlay = document.createElement('div')
+    this.gameOverOverlay.style.position = 'fixed'
+    this.gameOverOverlay.style.inset = '0'
+    this.gameOverOverlay.style.display = 'none'
+    this.gameOverOverlay.style.alignItems = 'center'
+    this.gameOverOverlay.style.justifyContent = 'center'
+    this.gameOverOverlay.style.flexDirection = 'column'
+    this.gameOverOverlay.style.gap = '0.75rem'
+    this.gameOverOverlay.style.background = 'rgba(10, 2, 2, 0.45)'
+    this.gameOverOverlay.style.color = '#ffe6e6'
+    this.gameOverOverlay.style.fontFamily = 'monospace'
+    this.gameOverOverlay.style.zIndex = '2'
+    this.gameOverOverlay.style.pointerEvents = 'none'
+    this.gameOverOverlay.innerHTML =
+      '<div style="font-size:2rem;font-weight:700;letter-spacing:0.12em;color:#ff6b6b;text-shadow:0 0 18px rgba(255,80,80,0.55)">GAME OVER</div><div style="font-size:0.95rem;opacity:0.9">Sua nave foi destruída. Câmera em modo espectador — recarregue para jogar novamente.</div>'
+    this.container.append(this.gameOverOverlay)
 
     this.asteroidPool = new AsteroidPool(this.scene)
     this.projectilePool = new ProjectilePool(this.scene)
@@ -237,6 +265,7 @@ export class GameApp {
     this.starfield.geometry.dispose()
     this.starfield.material.dispose()
     this.renderer.dispose()
+    this.gameOverOverlay.remove()
     this.renderer.domElement.remove()
   }
 
@@ -252,8 +281,15 @@ export class GameApp {
     this.inputManager.update(dt)
     this.sendInputBatch()
     this.applySnapshotIfAny()
-    this.applyFreeLook()
-    this.cockpit.update(dt)
+    const starCenter = this.spectatorActive ? this.camera.position : this.cockpit.root.position
+    recenterStarfield(this.starfield, starCenter)
+    if (this.spectatorActive) {
+      this.updateSpectator(dt)
+    } else {
+      this.applyFreeLook()
+      this.cockpit.update(dt)
+      this.updateCameraShake(dt)
+    }
     this.hud.update(this.hudState, dt)
     this.pips.update(this.hudContacts, this.camera, dt)
     this.particleSystem.update(dt)
@@ -343,11 +379,32 @@ export class GameApp {
     }
 
     if (local !== undefined) {
+      this.cockpit.root.position.set(local.pos[0], local.pos[1], local.pos[2])
+      this.cockpit.root.quaternion.set(local.rot[0], local.rot[1], local.rot[2], local.rot[3])
+
+      const nextShield = Math.max(0, local.shield)
+      if (nextShield < this.lastLocalShield - 0.01) {
+        const damage = this.lastLocalShield - nextShield
+        const intensity = Math.min(0.35, 0.04 + damage / 140)
+        this.triggerCameraShake(intensity, 0.22)
+        this.soundSynth.playEvent({
+          kind: 'HIT',
+          pos: this.audioListenerPosArr,
+          scale: Math.max(0.8, Math.min(2.5, damage / 20)),
+        })
+      }
+      this.lastLocalShield = nextShield
       this.hudState.shield = Math.max(0, local.shield / 100)
       this.hudState.energy = Math.max(0, local.energy / 100)
       this.hudState.score = local.score
     }
     this.hudState.wave = snap.wave
+
+    const wasGameOver = this.gameOver
+    this.gameOver = snap.gameOver === true || (local !== undefined && local.alive === false)
+    if (this.gameOver && !wasGameOver) {
+      this.onGameOver()
+    }
 
     this.updateContacts(snap)
   }
@@ -563,6 +620,117 @@ export class GameApp {
       this.audioListenerDirArr,
       this.audioListenerUpArr,
     )
+  }
+
+  private triggerCameraShake(intensity: number, duration: number): void {
+    if (this.gameOver) {
+      // Allow a stronger final shake, but keep it bounded.
+      this.shakeIntensity = Math.max(this.shakeIntensity, Math.min(0.5, intensity))
+      this.shakeDuration = Math.max(this.shakeDuration, duration)
+      this.shakeTimeRemaining = Math.max(this.shakeTimeRemaining, duration)
+      return
+    }
+    if (intensity <= this.shakeIntensity && this.shakeTimeRemaining > 0) return
+    this.shakeIntensity = Math.max(0, intensity)
+    this.shakeDuration = Math.max(0.01, duration)
+    this.shakeTimeRemaining = this.shakeDuration
+  }
+
+  private updateCameraShake(dt: number): void {
+    if (this.shakeTimeRemaining <= 0) {
+      this.camera.position.set(0, 0, 0)
+      return
+    }
+    this.shakeTimeRemaining = Math.max(0, this.shakeTimeRemaining - dt)
+    const t = this.shakeDuration > 0 ? this.shakeTimeRemaining / this.shakeDuration : 0
+    const amp = this.shakeIntensity * t
+    // Cheap deterministic-ish noise using time; not simulation-critical.
+    const n = performance.now() * 0.001
+    this.camera.position.set(
+      Math.sin(n * 43.7) * amp,
+      Math.cos(n * 37.3) * amp * 0.6,
+      0,
+    )
+  }
+
+  private onGameOver(): void {
+    this.triggerCameraShake(0.45, 0.5)
+    this.gameOverOverlay.style.display = 'flex'
+    this.enterSpectatorMode()
+  }
+
+  private enterSpectatorMode(): void {
+    if (this.spectatorActive || this.disposed) return
+    this.spectatorActive = true
+    this.spectatorTargetPos.copy(this.cockpit.root.position)
+    this.spectatorLookAt.copy(this.spectatorTargetPos)
+    // Move camera to scene so it can follow targets independently of the hidden cockpit.
+    this.scene.attach(this.camera)
+    this.cockpit.root.visible = false
+    this.camera.position.set(
+      this.spectatorTargetPos.x,
+      this.spectatorTargetPos.y + 12,
+      this.spectatorTargetPos.z + 30,
+    )
+    this.camera.lookAt(this.spectatorTargetPos)
+  }
+
+  private updateSpectator(dt: number): void {
+    const snap = this.latestSnapshot
+    let found = false
+    let bestD2 = Number.POSITIVE_INFINITY
+
+    if (snap !== null) {
+      for (let i = 0; i < snap.enemies.length; i++) {
+        const e = snap.enemies[i]
+        if (e === undefined) continue
+        const dx = e.pos[0] - this.spectatorLookAt.x
+        const dy = e.pos[1] - this.spectatorLookAt.y
+        const dz = e.pos[2] - this.spectatorLookAt.z
+        const d2 = dx * dx + dy * dy + dz * dz
+        if (d2 < bestD2) {
+          bestD2 = d2
+          this.spectatorTargetPos.set(e.pos[0], e.pos[1], e.pos[2])
+          found = true
+        }
+      }
+      if (!found) {
+        for (let i = 0; i < snap.asteroids.length; i++) {
+          const a = snap.asteroids[i]
+          if (a === undefined) continue
+          const dx = a.pos[0] - this.spectatorLookAt.x
+          const dy = a.pos[1] - this.spectatorLookAt.y
+          const dz = a.pos[2] - this.spectatorLookAt.z
+          const d2 = dx * dx + dy * dy + dz * dz
+          if (d2 < bestD2) {
+            bestD2 = d2
+            this.spectatorTargetPos.set(a.pos[0], a.pos[1], a.pos[2])
+            found = true
+          }
+        }
+      }
+    }
+
+    if (!found) {
+      // Slow orbit around last known point if nothing to follow.
+      const t = performance.now() * 0.00025
+      this.spectatorTargetPos.set(
+        this.spectatorLookAt.x + Math.cos(t) * 0.01,
+        this.spectatorLookAt.y,
+        this.spectatorLookAt.z + Math.sin(t) * 0.01,
+      )
+    }
+
+    const lerp = 1 - Math.exp(-dt * 2.5)
+    this.spectatorLookAt.lerp(this.spectatorTargetPos, lerp)
+
+    this.spectatorDesiredPos.set(
+      this.spectatorLookAt.x,
+      this.spectatorLookAt.y + 10,
+      this.spectatorLookAt.z + 24,
+    )
+    this.camera.position.lerp(this.spectatorDesiredPos, 1 - Math.exp(-dt * 1.8))
+    this.camera.lookAt(this.spectatorLookAt)
   }
 
   private resize(): void {
