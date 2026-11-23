@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@asteroids/shared": "workspace:*",
+    "@msgpack/msgpack": "^3.1.2",
     "three": "^0.187.0"
   },
   "devDependencies": {
