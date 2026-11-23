@@ -5,3 +5,9 @@ coverage/
 *.log
 .DS_Store
 .superpowers/sdd/
+
+# Server leaderboard DB (local runtime data)
+server/data/*.db
+server/data/*.db-*
+server/data/*.sqlite
+server/data/*.sqlite-*

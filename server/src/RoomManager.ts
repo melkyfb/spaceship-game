@@ -1,20 +1,29 @@
+import { LeaderboardStore } from './LeaderboardStore';
 import { ServerRoom, type ScoreRecorder, type SocketLike } from './ServerRoom';
 
 export interface RoomManagerOptions {
   seed?: number;
   scoreRecorder?: ScoreRecorder;
+  leaderboardStore?: LeaderboardStore;
   now?: () => number;
 }
 
 export class RoomManager {
   readonly defaultRoom: ServerRoom;
+  readonly leaderboardStore: LeaderboardStore | undefined;
   private readonly rooms = new Map<string, ServerRoom>();
 
   constructor(opts: RoomManagerOptions = {}) {
+    this.leaderboardStore = opts.leaderboardStore;
+    const scoreRecorder: ScoreRecorder | undefined =
+      opts.scoreRecorder ?? (this.leaderboardStore ? (r) => this.leaderboardStore!.recordScore(r) : undefined);
     this.defaultRoom = new ServerRoom({
       roomId: 'default',
       seed: opts.seed,
-      scoreRecorder: opts.scoreRecorder,
+      scoreRecorder,
+      createPlayerToken: this.leaderboardStore
+        ? (existing) => this.leaderboardStore!.getOrCreateToken(existing)
+        : undefined,
       now: opts.now,
     });
     this.rooms.set(this.defaultRoom.roomId, this.defaultRoom);

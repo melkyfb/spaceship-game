@@ -30,10 +30,13 @@ interface ClientState {
   joined: boolean;
 }
 
+export type PlayerTokenProvider = (existingToken?: string) => string;
+
 export interface ServerRoomOptions {
   roomId?: string;
   seed?: number;
   scoreRecorder?: ScoreRecorder;
+  createPlayerToken?: PlayerTokenProvider;
   now?: () => number;
 }
 
@@ -43,6 +46,7 @@ export class ServerRoom {
   readonly roomId: string;
   readonly gameRoom: GameRoom;
   private readonly scoreRecorder: ScoreRecorder | undefined;
+  private readonly createPlayerToken: PlayerTokenProvider;
   private readonly now: () => number;
   private readonly clientsBySocket = new Map<SocketLike, ClientState>();
   private readonly socketByPlayerId = new Map<string, SocketLike>();
@@ -51,6 +55,7 @@ export class ServerRoom {
   constructor(opts: ServerRoomOptions = {}) {
     this.roomId = opts.roomId ?? 'default';
     this.scoreRecorder = opts.scoreRecorder;
+    this.createPlayerToken = opts.createPlayerToken ?? (() => randomUUID());
     this.now = opts.now ?? (() => Date.now());
     this.gameRoom = new GameRoom({
       seed: opts.seed ?? 1,
@@ -180,7 +185,10 @@ export class ServerRoom {
     }
 
     const playerId = randomUUID();
-    const playerToken = randomUUID();
+    const requestedToken = (msg as { playerToken?: unknown }).playerToken;
+    const playerToken = this.createPlayerToken(
+      typeof requestedToken === 'string' && requestedToken.length > 0 ? requestedToken : undefined,
+    );
     const name = normalizeName(msg.name);
 
     const added = this.gameRoom.addPlayer({ id: playerId, name, platform: msg.platform });

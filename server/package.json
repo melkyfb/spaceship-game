@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.1.2",
+    "@types/better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^13.2.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
