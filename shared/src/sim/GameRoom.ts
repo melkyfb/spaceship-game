@@ -27,14 +27,30 @@ export interface GameRoomOptions {
   initialAsteroids?: AsteroidState[]
   initialWave?: number
   spawnInitialWave?: boolean
-  /** When true (default), solo player death ends the run instead of respawning. */
+  /** When true (default for solo), player death ends the run instead of respawning. */
   gameOverOnDeath?: boolean
+  /** When true, dead players respawn automatically after delay. Defaults to false (request required). */
+  autoRespawn?: boolean
+}
+
+export interface AddPlayerOptions {
+  id: string
+  name: string
+  platform: PlatformMode
 }
 
 interface ShipRuntime {
   primaryCooldown: number
   secondaryCooldown: number
   pendingCmd: ShipCommand | null
+  respawnTimer: number
+  respawnRequested: boolean
+}
+
+interface KillInfo {
+  killerKind: 'ENEMY' | 'PLAYER' | 'ASTEROID' | 'UNKNOWN'
+  killerId?: string | number
+  killerPos: [number, number, number]
 }
 
 interface ProjectileRuntime {
@@ -201,7 +217,8 @@ export class GameRoom {
   private readonly shipPrevVel: [number, number, number][] = []
   private readonly shipSweep: ShipState[] = []
   private readonly autoWaves: boolean
-  private readonly gameOverOnDeath: boolean
+  private gameOverOnDeath: boolean
+  private readonly autoRespawn: boolean
   private readonly forwardScratch: [number, number, number] = [0, 0, -1]
   private readonly hitScratch: HitResult = { hit: false, t: 0, nx: 0, ny: 0, nz: 0 }
   private gameOver = false
@@ -223,31 +240,15 @@ export class GameRoom {
     this.rng = makeRng(seed)
     this.autoWaves = opts.spawnInitialWave !== false
     this.gameOverOnDeath = opts.gameOverOnDeath !== false
+    // Backward compat: legacy solo rooms with gameOverOnDeath=false auto-respawned.
+    // M5 multiplayer/training should pass autoRespawn: false and use requestRespawn.
+    this.autoRespawn = opts.autoRespawn ?? (opts.gameOverOnDeath === false)
 
     const playerId = opts.playerId ?? 'p1'
     const playerName = opts.playerName ?? 'Player'
     const platform = opts.platform ?? 'PC'
 
-    const ship: ShipState = {
-      id: playerId,
-      name: playerName,
-      platform,
-      pos: [0, 0, 0],
-      vel: [0, 0, 0],
-      rot: [0, 0, 0, 1],
-      angVel: [0, 0, 0],
-      shield: SHIP_CONFIG.MAX_SHIELD,
-      energy: SHIP_CONFIG.MAX_ENERGY,
-      score: 0,
-      alive: true,
-      invulnTimer: WORLD_CONFIG.SPAWN_INVULN_SEC,
-      lastProcessedTick: 0,
-    }
-    this.ships.push(ship)
-    this.shipRuntimes.push({ primaryCooldown: 0, secondaryCooldown: 0, pendingCmd: null })
-    this.shipPrevPos.push([0, 0, 0])
-    this.shipPrevVel.push([0, 0, 0])
-    this.shipSweep.push(copyShip(ship))
+    this.addShipInternal(playerId, playerName, platform, WORLD_CONFIG.SPAWN_INVULN_SEC)
 
     if (Array.isArray(opts.initialAsteroids)) {
       let maxId = 0
@@ -271,6 +272,147 @@ export class GameRoom {
       // planWave populated enemiesRemaining based on entries; but we didn't add them. Reset to 0.
       while (!this.waveManager.isWaveClear()) this.waveManager.onEnemyKilled()
     }
+  }
+
+  private addShipInternal(id: string, name: string, platform: PlatformMode, invulnTimer: number): ShipState {
+    const ship: ShipState = {
+      id,
+      name,
+      platform,
+      pos: [0, 0, 0],
+      vel: [0, 0, 0],
+      rot: [0, 0, 0, 1],
+      angVel: [0, 0, 0],
+      shield: SHIP_CONFIG.MAX_SHIELD,
+      energy: SHIP_CONFIG.MAX_ENERGY,
+      score: 0,
+      alive: true,
+      invulnTimer,
+      lastProcessedTick: 0,
+    }
+    this.ships.push(ship)
+    this.shipRuntimes.push({ primaryCooldown: 0, secondaryCooldown: 0, pendingCmd: null, respawnTimer: 0, respawnRequested: false })
+    this.shipPrevPos.push([0, 0, 0])
+    this.shipPrevVel.push([0, 0, 0])
+    this.shipSweep.push(copyShip(ship))
+    return ship
+  }
+
+  get currentTick(): number {
+    return this.tick
+  }
+
+  hasPlayer(playerId: string): boolean {
+    return this.findShipIndex(playerId) >= 0
+  }
+
+  playerCount(): number {
+    return this.ships.length
+  }
+
+  snapshot(): ServerMessage {
+    return this.createSnapshot()
+  }
+
+  addPlayer(opts: AddPlayerOptions): ShipState | null {
+    if (!opts || typeof opts.id !== 'string' || opts.id.length === 0) return null
+    if (this.hasPlayer(opts.id)) return this.ships[this.findShipIndex(opts.id)] ?? null
+    if (this.ships.length >= WORLD_CONFIG.MAX_PLAYERS_PER_ROOM) return null
+    // Multiplayer rooms do not end on individual death.
+    if (this.ships.length >= 1) this.gameOverOnDeath = false
+    return this.addShipInternal(opts.id, opts.name ?? opts.id, opts.platform ?? 'PC', WORLD_CONFIG.SPAWN_INVULN_SEC)
+  }
+
+  removePlayer(playerId: string): void {
+    this.quit(playerId)
+  }
+
+  quit(playerId: string): void {
+    const idx = this.findShipIndex(playerId)
+    if (idx < 0) return
+    const ship = this.ships[idx]
+    if (ship !== undefined && ship.score > 0) {
+      this.emitScoreRecorded(ship)
+      ship.score = 0
+    }
+    this.removeShipAtIndex(idx)
+  }
+
+  requestRespawn(playerId: string): boolean {
+    const idx = this.findShipIndex(playerId)
+    if (idx < 0) return false
+    const ship = this.ships[idx]
+    const rt = this.shipRuntimes[idx]
+    if (ship === undefined || rt === undefined) return false
+    if (ship.alive) return false
+    if (this.gameOver) return false
+    if (rt.respawnTimer > 0) {
+      rt.respawnRequested = true
+      return false
+    }
+    rt.respawnRequested = false
+    this.respawnShip(ship, rt)
+    return true
+  }
+
+  receive(playerId: string, msg: ClientMessage | ShipCommand[]): void {
+    if (Array.isArray(msg)) {
+      this.receiveForPlayer(playerId, msg)
+      return
+    }
+    if (msg.t === 'INPUT_BATCH') {
+      this.receiveForPlayer(playerId, msg.cmds)
+      return
+    }
+    if (msg.t === 'RESPAWN_REQUEST') {
+      this.requestRespawn(playerId)
+      return
+    }
+    if (msg.t === 'QUIT') {
+      this.quit(playerId)
+    }
+  }
+
+  receiveForPlayer(playerId: string, cmds: ShipCommand[]): void {
+    if (!Array.isArray(cmds)) return
+    const idx = this.findShipIndex(playerId)
+    if (idx < 0) return
+    const ship = this.ships[idx]
+    const rt = this.shipRuntimes[idx]
+    if (ship === undefined || rt === undefined) return
+    for (let i = 0; i < cmds.length; i++) {
+      const raw = cmds[i]
+      if (raw === undefined || raw === null || typeof raw !== 'object') continue
+      const cmd = sanitizeCommand(raw)
+      if (cmd.tick <= ship.lastProcessedTick) continue
+      const pending = rt.pendingCmd
+      if (pending === null || cmd.tick >= pending.tick) {
+        rt.pendingCmd = cmd
+      }
+    }
+  }
+
+  private findShipIndex(playerId: string): number {
+    for (let i = 0; i < this.ships.length; i++) {
+      if (this.ships[i]?.id === playerId) return i
+    }
+    return -1
+  }
+
+  private removeShipAtIndex(index: number): void {
+    const last = this.ships.length - 1
+    if (index !== last) {
+      this.ships[index] = this.ships[last]!
+      this.shipRuntimes[index] = this.shipRuntimes[last]!
+      this.shipPrevPos[index] = this.shipPrevPos[last]!
+      this.shipPrevVel[index] = this.shipPrevVel[last]!
+      this.shipSweep[index] = this.shipSweep[last]!
+    }
+    this.ships.length = last
+    this.shipRuntimes.length = last
+    this.shipPrevPos.length = last
+    this.shipPrevVel.length = last
+    this.shipSweep.length = last
   }
 
   enqueue(cmds: ShipCommand[]): void {
@@ -323,14 +465,12 @@ export class GameRoom {
         ship.lastProcessedTick = cmd.tick
       } else {
         ship.lastProcessedTick = Math.max(ship.lastProcessedTick, cmd.tick)
-        if (this.gameOverOnDeath) {
-          ship.vel[0] = 0; ship.vel[1] = 0; ship.vel[2] = 0
-          ship.angVel[0] = 0; ship.angVel[1] = 0; ship.angVel[2] = 0
-        } else {
-          // Respawn timer handling for non-game-over modes/tests.
-          ship.invulnTimer = Math.max(0, ship.invulnTimer - FIXED_DT)
-          if (ship.invulnTimer <= 0) {
-            this.respawnShip(ship)
+        ship.vel[0] = 0; ship.vel[1] = 0; ship.vel[2] = 0
+        ship.angVel[0] = 0; ship.angVel[1] = 0; ship.angVel[2] = 0
+        if (!this.gameOverOnDeath && !this.gameOver) {
+          rt.respawnTimer = Math.max(0, rt.respawnTimer - FIXED_DT)
+          if (rt.respawnTimer <= 0 && (rt.respawnRequested || this.autoRespawn)) {
+            this.respawnShip(ship, rt)
           }
         }
       }
@@ -848,7 +988,16 @@ export class GameRoom {
       }
 
       if (s.shield <= 0 && s.alive) {
-        this.killShip(s)
+        const rt = this.shipRuntimes[i]
+        let killer: KillInfo | undefined
+        for (let ci = this.collisionBuffer.count - 1; ci >= 0; ci--) {
+          const cev = this.collisionBuffer.get(ci)
+          if (cev !== undefined && cev.kind === 'SHIP_ASTEROID' && cev.aId === s.id) {
+            killer = { killerKind: 'ASTEROID', killerId: cev.bId, killerPos: [cev.x, cev.y, cev.z] }
+            break
+          }
+        }
+        if (rt !== undefined) this.killShip(s, rt, killer)
       }
     }
 
@@ -1055,8 +1204,13 @@ export class GameRoom {
         const t = this.hitScratch.t
         const dmg = p.kind === 'MISSILE' ? 35 : 12
         s.shield = Math.max(0, s.shield - dmg)
-        this.emitEvent('HIT', [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t], 0.8)
-        if (s.shield <= 0) this.killShip(s)
+        const hitPos: [number, number, number] = [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t]
+        this.emitEvent('HIT', hitPos, 0.8)
+        if (s.shield <= 0) {
+          const rt = this.shipRuntimes[si]
+          const killer = this.killerFromProjectile(p, hitPos)
+          if (rt !== undefined) this.killShip(s, rt, killer)
+        }
         hit = true
         break
       }
@@ -1067,28 +1221,83 @@ export class GameRoom {
     }
   }
 
-  private killShip(ship: ShipState): void {
+  private killerFromProjectile(p: ProjectileState, fallbackPos: [number, number, number]): KillInfo {
+    if (p.ownerId.startsWith('enemy:')) {
+      const idStr = p.ownerId.slice('enemy:'.length)
+      const enemyId = Number(idStr)
+      if (Number.isFinite(enemyId)) {
+        for (let i = 0; i < this.enemies.length; i++) {
+          const e = this.enemies[i]
+          if (e !== undefined && e.id === enemyId) {
+            return { killerKind: 'ENEMY', killerId: enemyId, killerPos: [e.pos[0], e.pos[1], e.pos[2]] }
+          }
+        }
+        return { killerKind: 'ENEMY', killerId: Math.trunc(enemyId), killerPos: [fallbackPos[0], fallbackPos[1], fallbackPos[2]] }
+      }
+      return { killerKind: 'ENEMY', killerPos: [fallbackPos[0], fallbackPos[1], fallbackPos[2]] }
+    }
+    // Player projectile (future PvP) - attribute to player.
+    return { killerKind: 'PLAYER', killerId: p.ownerId, killerPos: [fallbackPos[0], fallbackPos[1], fallbackPos[2]] }
+  }
+
+  private emitScoreRecorded(ship: ShipState): void {
+    this.pendingEvents.push({
+      t: 'EVENT',
+      kind: 'SCORE_RECORDED',
+      pos: [ship.pos[0], ship.pos[1], ship.pos[2]],
+      scale: 1,
+      playerId: ship.id,
+      name: ship.name,
+      score: ship.score,
+      wave: this.waveManager.currentWave,
+    })
+  }
+
+  private killShip(ship: ShipState, rt: ShipRuntime, killer?: KillInfo): void {
     if (!ship.alive) return
+    if (ship.score > 0) {
+      this.emitScoreRecorded(ship)
+      ship.score = 0
+    }
     ship.alive = false
     ship.shield = 0
     ship.vel[0] = 0; ship.vel[1] = 0; ship.vel[2] = 0
     ship.angVel[0] = 0; ship.angVel[1] = 0; ship.angVel[2] = 0
-    ship.invulnTimer = this.gameOverOnDeath ? 0 : WORLD_CONFIG.RESPAWN_DELAY_SEC
-    this.emitEvent('PLAYER_DEATH', [ship.pos[0], ship.pos[1], ship.pos[2]], 2)
-    if (this.gameOverOnDeath && this.ships.length <= 1) {
+
+    const isSoloGameOver = this.gameOverOnDeath && this.ships.length <= 1
+    rt.respawnTimer = isSoloGameOver ? 0 : WORLD_CONFIG.RESPAWN_DELAY_SEC
+    rt.respawnRequested = false
+    ship.invulnTimer = 0
+
+    this.pendingEvents.push({
+      t: 'EVENT',
+      kind: 'PLAYER_DEATH',
+      pos: [ship.pos[0], ship.pos[1], ship.pos[2]],
+      scale: 2,
+      playerId: ship.id,
+      killerKind: killer?.killerKind ?? 'UNKNOWN',
+      ...(killer?.killerId !== undefined ? { killerId: killer.killerId } : {}),
+      killerPos: killer?.killerPos ?? [ship.pos[0], ship.pos[1], ship.pos[2]],
+      respawnDelaySec: WORLD_CONFIG.RESPAWN_DELAY_SEC,
+    })
+
+    if (isSoloGameOver) {
       this.gameOver = true
     }
   }
 
-  private respawnShip(ship: ShipState): void {
+  private respawnShip(ship: ShipState, rt: ShipRuntime): void {
     ship.alive = true
     ship.shield = SHIP_CONFIG.MAX_SHIELD
     ship.energy = SHIP_CONFIG.MAX_ENERGY
+    ship.score = 0
     ship.pos[0] = 0; ship.pos[1] = 0; ship.pos[2] = 0
     ship.vel[0] = 0; ship.vel[1] = 0; ship.vel[2] = 0
     ship.rot[0] = 0; ship.rot[1] = 0; ship.rot[2] = 0; ship.rot[3] = 1
     ship.angVel[0] = 0; ship.angVel[1] = 0; ship.angVel[2] = 0
     ship.invulnTimer = WORLD_CONFIG.SPAWN_INVULN_SEC
+    rt.respawnTimer = 0
+    rt.respawnRequested = false
   }
 
   private killEnemyAtIndex(index: number, killerOwnerId?: string): void {

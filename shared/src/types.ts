@@ -112,6 +112,7 @@ export type PlayerDeathEvent = EventBase & {
   playerId?: string;
   killerId?: string | number;
   killerKind?: KillerKind;
+  killerPos?: [number, number, number];
   respawnDelaySec?: number;
 };
 
