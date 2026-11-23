@@ -256,8 +256,13 @@ export class ServerRoom {
     if (!Number.isFinite(ev.score) || ev.score <= 0) return;
     const socket = this.socketByPlayerId.get(ev.playerId);
     const client = socket ? this.clientsBySocket.get(socket) : undefined;
+    const playerToken = client?.playerToken;
+    if (!playerToken) {
+      console.warn(`[server-room] skipping SCORE_RECORDED for ${ev.playerId}: missing playerToken`);
+      return;
+    }
     this.scoreRecorder({
-      playerToken: client?.playerToken ?? '',
+      playerToken,
       playerId: ev.playerId,
       name: ev.name,
       score: Math.max(0, Math.trunc(ev.score)),

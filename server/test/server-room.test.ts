@@ -227,3 +227,34 @@ test('INPUT_BATCH redundant commands are accepted and do not regress state', () 
   // Position should have progressed (thrusting forward)
   assert.ok(ship2.pos[2] < 0);
 });
+
+test('SCORE_RECORDED with missing playerToken is skipped, not recorded with empty token', () => {
+  const scores: ScoreRecord[] = [];
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    const room = new ServerRoom({
+      roomId: 'default',
+      seed: 1,
+      scoreRecorder: (r) => scores.push(r),
+    });
+    const gr = (room as any).gameRoom;
+    // Inject a score event for a player with no client/token mapping.
+    (gr as any).pendingEvents.push({
+      t: 'EVENT',
+      kind: 'SCORE_RECORDED',
+      pos: [0, 0, 0],
+      scale: 1,
+      playerId: 'ghost',
+      name: 'Ghost',
+      score: 123,
+      wave: 2,
+    });
+    room.tick();
+    assert.equal(scores.length, 0);
+    assert.ok(warnings.some((w) => w.includes('missing playerToken') && w.includes('ghost')));
+  } finally {
+    console.warn = originalWarn;
+  }
+});
