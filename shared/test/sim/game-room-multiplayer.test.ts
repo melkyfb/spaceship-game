@@ -388,4 +388,49 @@ describe('GameRoom multiplayer (Task 2)', () => {
     expect(enemyDeath.killerId).toBe(42)
     expect(enemyDeath.respawnDelaySec).toBe(WORLD_CONFIG.RESPAWN_DELAY_SEC)
   })
+
+  it('addPlayer revives a solo game-over room into multiplayer respawn flow', () => {
+    const room = new GameRoom({
+      seed: 5,
+      playerId: 'p1',
+      playerName: 'Pilot',
+      platform: 'PC',
+      spawnInitialWave: false,
+      initialWave: 0,
+      initialAsteroids: [
+        { id: 200, pos: [0, 0, -3], vel: [0, 0, 0], rot: [0, 0, 0, 1], angVel: [0, 0, 0], size: 'LARGE', hp: 10000 },
+      ],
+    })
+
+    // wait out spawn invuln, then force death
+    for (let i = 1; i <= 100; i++) {
+      room.receiveForPlayer('p1', [makeCmd(i, {})])
+      room.stepFixed()
+      room.drainEvents()
+    }
+    let died = false
+    for (let i = 101; i <= 400; i++) {
+      room.receiveForPlayer('p1', [makeCmd(i, { thrust: 1 })])
+      room.stepFixed()
+      room.drainEvents()
+      const s = room.snapshot()
+      if (isSnapshot(s) && s.gameOver === true) { died = true; break }
+    }
+    expect(died).toBe(true)
+
+    room.addPlayer({ id: 'p2', name: 'Bob', platform: 'PC' })
+
+    const afterJoin = room.snapshot()
+    if (!isSnapshot(afterJoin)) throw new Error('snapshot')
+    expect(afterJoin.gameOver).toBe(false)
+    expect(room.hasPlayer('p2')).toBe(true)
+
+    expect(room.requestRespawn('p1')).toBe(true)
+    room.stepFixed()
+    const afterRespawn = room.snapshot()
+    if (!isSnapshot(afterRespawn)) throw new Error('snapshot')
+    const p1 = afterRespawn.ships.find((s) => s.id === 'p1')
+    expect(p1?.alive).toBe(true)
+    expect(p1?.score).toBe(0)
+  })
 })

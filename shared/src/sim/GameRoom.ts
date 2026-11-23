@@ -318,8 +318,24 @@ export class GameRoom {
     if (!opts || typeof opts.id !== 'string' || opts.id.length === 0) return null
     if (this.hasPlayer(opts.id)) return this.ships[this.findShipIndex(opts.id)] ?? null
     if (this.ships.length >= WORLD_CONFIG.MAX_PLAYERS_PER_ROOM) return null
-    // Multiplayer rooms do not end on individual death.
-    if (this.ships.length >= 1) this.gameOverOnDeath = false
+    // Multiplayer rooms do not end on individual death. If a solo room already
+    // latched gameOver, clear it so dead players can rejoin the normal respawn flow.
+    if (this.ships.length >= 1) {
+      this.gameOverOnDeath = false
+      if (this.gameOver) {
+        this.gameOver = false
+        for (let i = 0; i < this.ships.length; i++) {
+          const s = this.ships[i]
+          const rt = this.shipRuntimes[i]
+          if (s === undefined || rt === undefined) continue
+          if (!s.alive) {
+            rt.respawnTimer = 0
+            rt.respawnRequested = false
+            s.invulnTimer = 0
+          }
+        }
+      }
+    }
     return this.addShipInternal(opts.id, opts.name ?? opts.id, opts.platform ?? 'PC', WORLD_CONFIG.SPAWN_INVULN_SEC)
   }
 
