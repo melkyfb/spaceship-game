@@ -74,6 +74,7 @@ export class GameApp {
   private localPlayerId: string | null = null
   private commandTick = 1
   private readonly commandBuffer: ShipCommand[] = []
+  private readonly commandBatchOut: ShipCommand[] = []
   private transportReady = false
   private latestSnapshot: (ServerMessage & { t: 'SNAPSHOT' }) | null = null
   private appliedSnapshot: (ServerMessage & { t: 'SNAPSHOT' }) | null = null
@@ -309,7 +310,11 @@ export class GameApp {
     }
 
     if (!this.transportReady || this.disposed) return
-    const batch: ClientMessage = { t: 'INPUT_BATCH', cmds: this.commandBuffer.slice() }
+    this.commandBatchOut.length = this.commandBuffer.length
+    for (let i = 0; i < this.commandBuffer.length; i++) {
+      this.commandBatchOut[i] = this.commandBuffer[i]!
+    }
+    const batch: ClientMessage = { t: 'INPUT_BATCH', cmds: this.commandBatchOut }
     this.transport.send(batch)
   }
 

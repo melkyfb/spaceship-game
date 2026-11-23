@@ -158,6 +158,9 @@ export function resolveProjectileAsteroidCollisions(
     const p = projectiles[i];
     if (p === undefined) continue;
     if (!isFiniteNumber(p.ttl) || p.ttl <= 0) continue;
+    // Only player-owned projectiles damage asteroids (enemy plasma/missiles do not).
+    const isPlayerProjectile = p.kind === 'LASER' || (p.kind === 'MISSILE' && !p.ownerId.startsWith('enemy:'));
+    if (!isPlayerProjectile) continue;
 
     const ax = p.prevPos[0] ?? 0;
     const ay = p.prevPos[1] ?? 0;

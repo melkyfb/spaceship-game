@@ -36,6 +36,8 @@ function start(): void {
   post({ t: 'READY' })
 
   const stepMs = FIXED_DT * 1000
+  // M4 solo: fixed interval, no catch-up/backpressure. If the worker stalls,
+  // ticks are dropped rather than spiraling; acceptable for local solo.
   intervalId = setInterval(() => {
     if (!room) return
     room.stepFixed()

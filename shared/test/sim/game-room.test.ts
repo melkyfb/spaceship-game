@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ASTEROID_TIERS, ENEMY_ARCHETYPES } from '../../src/constants'
 import { FIXED_DT } from '../../src/physics'
 import { GameRoom } from '../../src/sim/GameRoom'
 import type { ServerMessage, ShipCommand } from '../../src/types'
@@ -252,7 +253,7 @@ describe('GameRoom', () => {
     let sawWaveClear = false
     {
       const room = new GameRoom({ seed: 7, playerId: 'p1', playerName: 'Pilot', platform: 'PC' })
-      for (let i = 1; i <= 6000; i++) {
+      for (let i = 1; i <= 12000; i++) {
         const snap = room.createSnapshot()
         let yaw = 0
         let pitch = 0
@@ -294,5 +295,204 @@ describe('GameRoom', () => {
       }
     }
     expect(sawWaveClear).toBe(true)
+  })
+
+  it('awards player score when destroying asteroids', () => {
+    const room = new GameRoom({
+      seed: 7,
+      playerId: 'p1',
+      playerName: 'Pilot',
+      platform: 'PC',
+      initialAsteroids: [
+        { id: 100, pos: [0, 0, -20], vel: [0, 0, 0], rot: [0, 0, 0, 1], angVel: [0, 0, 0], size: 'LARGE', hp: 10 },
+      ],
+      initialWave: 1,
+      spawnInitialWave: false,
+    })
+
+    let destroyedTick = -1
+    for (let i = 1; i <= 60; i++) {
+      room.enqueue([makeCmd(i, { firePrimary: true })])
+      room.stepFixed()
+      const snap = room.createSnapshot()
+      if (isSnapshot(snap) && !snap.asteroids.some((a) => a.id === 100)) {
+        destroyedTick = i
+        break
+      }
+    }
+
+    expect(destroyedTick).toBeGreaterThan(0)
+    const snap = room.createSnapshot()
+    if (!isSnapshot(snap)) throw new Error('expected snapshot')
+    expect(snap.asteroids.some((a) => a.id === 100)).toBe(false)
+    expect(snap.ships[0]?.score).toBeGreaterThanOrEqual(ASTEROID_TIERS.LARGE.score)
+  })
+
+  it('awards player score when killing an enemy', () => {
+    const room = new GameRoom({ seed: 7, playerId: 'p1', playerName: 'Pilot', platform: 'PC', spawnInitialWave: true, initialWave: 1 })
+
+    let initialEnemyArchetype: 'SCOUT' | 'BRUISER' | 'SCAVENGER' | null = null
+    let scoreAwarded = false
+    for (let i = 1; i <= 1200; i++) {
+      const snap = room.createSnapshot()
+      let yaw = 0
+      let pitch = 0
+      let thrust = 0
+      if (isSnapshot(snap)) {
+        const ship = snap.ships[0]
+        const enemy = snap.enemies[0]
+        if (ship && enemy) {
+          if (initialEnemyArchetype === null) initialEnemyArchetype = enemy.archetype
+          const dx = enemy.pos[0] - ship.pos[0]
+          const dy = enemy.pos[1] - ship.pos[1]
+          const dz = enemy.pos[2] - ship.pos[2]
+          const hx = Math.hypot(dx, dz)
+          const desiredYaw = Math.atan2(-dx, -dz)
+          const q = ship.rot
+          const siny = 2 * (q[3] * q[1] + q[0] * q[2])
+          const cosy = 1 - 2 * (q[1] * q[1] + q[0] * q[0])
+          const currentYaw = Math.atan2(siny, cosy)
+          let dyaw = desiredYaw - currentYaw
+          while (dyaw > Math.PI) dyaw -= Math.PI * 2
+          while (dyaw < -Math.PI) dyaw += Math.PI * 2
+          yaw = Math.max(-1, Math.min(1, dyaw * 2))
+          const desiredPitch = Math.atan2(dy, hx)
+          const sinp = 2 * (q[3] * q[0] - q[2] * q[1])
+          const currentPitch = Math.asin(Math.max(-1, Math.min(1, sinp)))
+          let dpitch = desiredPitch - currentPitch
+          pitch = Math.max(-1, Math.min(1, dpitch * 2))
+          thrust = 0.2
+        }
+        if ((ship?.score ?? 0) > 0) {
+          scoreAwarded = true
+          break
+        }
+      }
+      room.enqueue([makeCmd(i, { yaw, pitch, firePrimary: true, thrust })])
+      room.stepFixed()
+    }
+
+    const snap = room.createSnapshot()
+    if (!isSnapshot(snap)) throw new Error('expected snapshot')
+    expect(scoreAwarded || (snap.ships[0]?.score ?? 0) > 0).toBe(true)
+    if (initialEnemyArchetype !== null) {
+      expect(snap.ships[0]?.score ?? 0).toBeGreaterThanOrEqual(ENEMY_ARCHETYPES[initialEnemyArchetype].score)
+    }
+  })
+
+  it('does not let enemy projectiles damage asteroids', () => {
+    const room = new GameRoom({
+      seed: 11,
+      playerId: 'p1',
+      playerName: 'Pilot',
+      platform: 'PC',
+      spawnInitialWave: true,
+      initialWave: 1,
+    })
+
+    const before = room.createSnapshot()
+    if (!isSnapshot(before)) throw new Error('expected snapshot')
+    const hpBefore = new Map(before.asteroids.map((a) => [a.id, a.hp]))
+
+    for (let i = 1; i <= 300; i++) {
+      room.enqueue([makeCmd(i, {})])
+      room.stepFixed()
+    }
+
+    const after = room.createSnapshot()
+    if (!isSnapshot(after)) throw new Error('expected snapshot')
+    for (const a of after.asteroids) {
+      const prev = hpBefore.get(a.id)
+      if (prev !== undefined) {
+        expect(a.hp).toBe(prev)
+      }
+    }
+  })
+
+  it('spawns BRUISER homing missiles with HP and allows lasers to destroy them', () => {
+    const room = new GameRoom({
+      seed: 5,
+      playerId: 'p1',
+      playerName: 'Pilot',
+      platform: 'PC',
+      spawnInitialWave: false,
+      initialWave: 0,
+    })
+
+    ;(room as any).spawnEnemy('BRUISER', [0, 0, -80])
+
+    let sawHomingMissile = false
+    for (let i = 1; i <= 30; i++) {
+      room.enqueue([makeCmd(i, {})])
+      room.stepFixed()
+      const snap = room.createSnapshot()
+      if (!isSnapshot(snap)) continue
+      const missile = snap.projectiles.find((p) => p.kind === 'MISSILE' && p.ownerId.startsWith('enemy:'))
+      if (missile && missile.hp === ENEMY_ARCHETYPES.BRUISER.missileHp && missile.homingTargetId === 'p1') {
+        const speed = Math.hypot(missile.vel[0], missile.vel[1], missile.vel[2])
+        expect(speed).toBeCloseTo(ENEMY_ARCHETYPES.BRUISER.missileSpeed, 3)
+        sawHomingMissile = true
+        break
+      }
+    }
+    expect(sawHomingMissile).toBe(true)
+
+    // Move player off-axis and verify missile steers toward player.
+    let velBefore: [number, number, number] | null = null
+    let velAfter: [number, number, number] | null = null
+    for (let i = 31; i <= 90; i++) {
+      room.enqueue([makeCmd(i, { strafeX: 1 })])
+      room.stepFixed()
+      const snap = room.createSnapshot()
+      if (!isSnapshot(snap)) continue
+      const missile = snap.projectiles.find((p) => p.kind === 'MISSILE' && p.ownerId.startsWith('enemy:') && (p.hp ?? 0) > 0)
+      if (missile) {
+        if (velBefore === null) velBefore = [missile.vel[0], missile.vel[1], missile.vel[2]]
+        velAfter = [missile.vel[0], missile.vel[1], missile.vel[2]]
+      }
+    }
+    expect(velBefore).not.toBeNull()
+    expect(velAfter).not.toBeNull()
+    if (velBefore && velAfter) {
+      const dot = velBefore[0] * velAfter[0] + velBefore[1] * velAfter[1] + velBefore[2] * velAfter[2]
+      const magA = Math.hypot(velBefore[0], velBefore[1], velBefore[2])
+      const magB = Math.hypot(velAfter[0], velAfter[1], velAfter[2])
+      // Direction should change as missile homes toward moving player.
+      expect(dot / (magA * magB + 1e-9)).toBeLessThan(0.9999)
+    }
+
+    // Player lasers should be able to destroy enemy missiles.
+    const room2 = new GameRoom({
+      seed: 5,
+      playerId: 'p1',
+      playerName: 'Pilot',
+      platform: 'PC',
+      spawnInitialWave: false,
+      initialWave: 0,
+    })
+    ;(room2 as any).projectiles.push({
+      id: 9999,
+      ownerId: 'enemy:1',
+      kind: 'MISSILE',
+      pos: [0, 0, -20],
+      prevPos: [0, 0, -20],
+      vel: [0, 0, 0],
+      ttl: 5,
+      hp: 10,
+      homingTargetId: 'p1',
+    })
+
+    let destroyed = false
+    for (let i = 1; i <= 30; i++) {
+      room2.enqueue([makeCmd(i, { firePrimary: true })])
+      room2.stepFixed()
+      const snap = room2.createSnapshot()
+      if (!isSnapshot(snap)) continue
+      if (!snap.projectiles.some((p) => p.id === 9999)) {
+        destroyed = true
+        break
+      }
+    }
+    expect(destroyed).toBe(true)
   })
 })

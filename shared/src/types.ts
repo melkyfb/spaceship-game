@@ -60,6 +60,10 @@ export interface ProjectileState {
   prevPos: [number, number, number];
   vel: [number, number, number];
   ttl: number;
+  /** Runtime HP for destructible projectiles (e.g. BRUISER homing missile). */
+  hp?: number;
+  /** Ship/entity id to home toward. Used by homing missiles. */
+  homingTargetId?: string;
 }
 
 export interface PickupState {

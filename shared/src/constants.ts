@@ -62,6 +62,7 @@ export const ENEMY_ARCHETYPES = {
     fireConeDeg: 15,
     projectileSpeed: 180,
     primaryBurstCount: 2,
+    score: 150,
   },
   BRUISER: {
     hp: 180,
@@ -71,11 +72,13 @@ export const ENEMY_ARCHETYPES = {
     missileHp: 10,
     missileHoming: true,
     missileDestroyableByLasers: true,
+    score: 500,
   },
   SCAVENGER: {
     hp: 60,
     speed: 48,
     fleeRange: 55,
     deathDropCount: 2,
+    score: 200,
   },
 } as const;

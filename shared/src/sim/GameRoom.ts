@@ -126,7 +126,7 @@ function copyEnemy(e: EnemyState): EnemyState {
 }
 
 function copyProjectile(p: ProjectileState): ProjectileState {
-  return {
+  const out: ProjectileState = {
     id: p.id,
     ownerId: p.ownerId,
     kind: p.kind,
@@ -135,6 +135,9 @@ function copyProjectile(p: ProjectileState): ProjectileState {
     vel: [p.vel[0], p.vel[1], p.vel[2]],
     ttl: p.ttl,
   }
+  if (p.hp !== undefined) out.hp = p.hp
+  if (p.homingTargetId !== undefined) out.homingTargetId = p.homingTargetId
+  return out
 }
 
 function copyPickup(p: PickupState): PickupState {
@@ -402,6 +405,18 @@ export class GameRoom {
     this.pendingEvents.push({ t: 'EVENT', kind, pos: [pos[0], pos[1], pos[2]], scale })
   }
 
+  private awardScore(ownerId: string, score: number): void {
+    if (score <= 0) return
+    if (ownerId.startsWith('enemy:')) return
+    for (let i = 0; i < this.ships.length; i++) {
+      const s = this.ships[i]
+      if (s !== undefined && s.id === ownerId) {
+        s.score += score
+        return
+      }
+    }
+  }
+
   private spawnWave(wave: number): void {
     const plan = this.waveManager.planWave(wave, Math.max(1, this.countAlivePlayers()), this.ships, this.rng)
     for (let i = 0; i < plan.entries.length; i++) {
@@ -485,6 +500,8 @@ export class GameRoom {
     speed: number,
     ttl: number,
     muzzleOffset: number,
+    hp?: number,
+    homingTargetId?: string,
   ): void {
     const len = Math.hypot(dx, dy, dz)
     let nx = 0, ny = 0, nz = -1
@@ -492,7 +509,7 @@ export class GameRoom {
     const px = origin[0] + nx * muzzleOffset
     const py = origin[1] + ny * muzzleOffset
     const pz = origin[2] + nz * muzzleOffset
-    this.projectiles.push({
+    const proj: ProjectileState = {
       id: this.idSeq.next(),
       ownerId,
       kind,
@@ -500,13 +517,21 @@ export class GameRoom {
       prevPos: [px, py, pz],
       vel: [nx * speed, ny * speed, nz * speed],
       ttl,
-    })
+    }
+    if (hp !== undefined) proj.hp = hp
+    if (homingTargetId !== undefined) proj.homingTargetId = homingTargetId
+    this.projectiles.push(proj)
   }
 
   private stepProjectiles(): void {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i]
       if (p === undefined) continue
+
+      if (p.homingTargetId !== undefined) {
+        this.steerHomingProjectile(p)
+      }
+
       p.prevPos[0] = p.pos[0]; p.prevPos[1] = p.pos[1]; p.prevPos[2] = p.pos[2]
       p.pos[0] += p.vel[0] * FIXED_DT
       p.pos[1] += p.vel[1] * FIXED_DT
@@ -516,6 +541,76 @@ export class GameRoom {
         this.projectiles[i] = this.projectiles[this.projectiles.length - 1]!
         this.projectiles.length -= 1
       }
+    }
+  }
+
+  private steerHomingProjectile(p: ProjectileState): void {
+    const targetId = p.homingTargetId
+    if (targetId === undefined) return
+
+    let tx: number | undefined
+    let ty: number | undefined
+    let tz: number | undefined
+    for (let i = 0; i < this.ships.length; i++) {
+      const s = this.ships[i]
+      if (s !== undefined && s.id === targetId && s.alive) {
+        tx = s.pos[0]; ty = s.pos[1]; tz = s.pos[2]
+        break
+      }
+    }
+    if (tx === undefined || ty === undefined || tz === undefined) return
+
+    const dx = tx - p.pos[0]
+    const dy = ty - p.pos[1]
+    const dz = tz - p.pos[2]
+    const dist = Math.hypot(dx, dy, dz)
+    if (dist <= 1e-9) return
+
+    const speed = Math.hypot(p.vel[0], p.vel[1], p.vel[2])
+    if (speed <= 1e-9) return
+
+    const desiredX = (dx / dist) * speed
+    const desiredY = (dy / dist) * speed
+    const desiredZ = (dz / dist) * speed
+
+    // Max turn rate for slow homing missile (rad/s). Keeps behavior deterministic.
+    const maxTurn = 2.0 * FIXED_DT
+    const curX = p.vel[0] / speed
+    const curY = p.vel[1] / speed
+    const curZ = p.vel[2] / speed
+    const desX = desiredX / speed
+    const desY = desiredY / speed
+    const desZ = desiredZ / speed
+
+    let dot = curX * desX + curY * desY + curZ * desZ
+    if (dot > 1) dot = 1
+    if (dot < -1) dot = -1
+    const angle = Math.acos(dot)
+    if (angle <= 1e-6) {
+      p.vel[0] = desiredX; p.vel[1] = desiredY; p.vel[2] = desiredZ
+      return
+    }
+
+    const t = angle <= maxTurn ? 1 : maxTurn / angle
+    // Slerp-like interpolation on direction, then renormalize to speed.
+    const invSin = angle > 1e-6 ? 1 / Math.sin(angle) : 0
+    let nx: number, ny: number, nz: number
+    if (invSin > 0 && angle < Math.PI - 1e-3) {
+      const a = Math.sin((1 - t) * angle) * invSin
+      const b = Math.sin(t * angle) * invSin
+      nx = curX * a + desX * b
+      ny = curY * a + desY * b
+      nz = curZ * a + desZ * b
+    } else {
+      nx = curX + (desX - curX) * t
+      ny = curY + (desY - curY) * t
+      nz = curZ + (desZ - curZ) * t
+    }
+    const nl = Math.hypot(nx, ny, nz)
+    if (nl > 1e-9) {
+      p.vel[0] = (nx / nl) * speed
+      p.vel[1] = (ny / nl) * speed
+      p.vel[2] = (nz / nl) * speed
     }
   }
 
@@ -594,6 +689,8 @@ export class GameRoom {
   private readonly enemyCooldowns = new Map<number, number>()
   private readonly deadProjectileIds = new Set<number>()
   private readonly asteroidDamageById = new Map<number, number>()
+  private readonly asteroidDamageOwnerById = new Map<number, string>()
+  private readonly projectileDamageById = new Map<number, number>()
 
   private enemyTryFireScout(enemy: EnemyState, intent: EnemyIntent, _timeSec: number): void {
     const cd = this.enemyCooldowns.get(enemy.id) ?? 0
@@ -615,7 +712,27 @@ export class GameRoom {
     const cd = this.enemyCooldowns.get(enemy.id) ?? 0
     if (cd > 0) return
     forwardFromRot(enemy.rot, this.forwardScratch)
-    this.spawnProjectile(`enemy:${enemy.id}`, 'MISSILE', enemy.pos, this.forwardScratch[0], this.forwardScratch[1], this.forwardScratch[2], ENEMY_ARCHETYPES.BRUISER.missileSpeed, MISSILE_TTL, 4.0)
+
+    let targetId: string | undefined
+    let bestD2 = Infinity
+    for (let i = 0; i < this.ships.length; i++) {
+      const s = this.ships[i]
+      if (s === undefined || !s.alive) continue
+      const d2 = distSq(enemy.pos[0], enemy.pos[1], enemy.pos[2], s.pos[0], s.pos[1], s.pos[2])
+      if (d2 < bestD2) { bestD2 = d2; targetId = s.id }
+    }
+
+    this.spawnProjectile(
+      `enemy:${enemy.id}`,
+      'MISSILE',
+      enemy.pos,
+      this.forwardScratch[0], this.forwardScratch[1], this.forwardScratch[2],
+      ENEMY_ARCHETYPES.BRUISER.missileSpeed,
+      MISSILE_TTL,
+      4.0,
+      ENEMY_ARCHETYPES.BRUISER.missileHp,
+      targetId,
+    )
     this.enemyCooldowns.set(enemy.id, SHIP_CONFIG.SECONDARY_COOLDOWN)
   }
 
@@ -640,6 +757,9 @@ export class GameRoom {
 
     // Projectile-enemy (player projectiles hit enemies)
     this.resolveProjectileEnemyCollisions()
+
+    // Player lasers can destroy enemy homing missiles.
+    this.resolveLaserVsEnemyMissileCollisions()
 
     // Projectile-ship (enemy projectiles hit player)
     this.resolveProjectileShipCollisions()
@@ -733,6 +853,7 @@ export class GameRoom {
 
     this.deadProjectileIds.clear()
     this.asteroidDamageById.clear()
+    this.asteroidDamageOwnerById.clear()
 
     for (let i = 0; i < this.collisionBuffer.count; i++) {
       const ev = this.collisionBuffer.get(i)
@@ -744,6 +865,9 @@ export class GameRoom {
       const proj = this.findProjectileById(projId)
       const dmg = proj?.kind === 'MISSILE' ? PLAYER_PROJECTILE_DAMAGE_MISSILE : PLAYER_PROJECTILE_DAMAGE_LASER
       this.asteroidDamageById.set(ev.bId, prev + dmg)
+      if (proj !== undefined && !proj.ownerId.startsWith('enemy:')) {
+        this.asteroidDamageOwnerById.set(ev.bId, proj.ownerId)
+      }
       this.emitEvent('HIT', [ev.x, ev.y, ev.z], 0.6)
     }
 
@@ -765,7 +889,7 @@ export class GameRoom {
         if (dmg === undefined) continue
         a.hp -= dmg
         if (a.hp <= 0) {
-          this.destroyAsteroidAtIndex(i)
+          this.destroyAsteroidAtIndex(i, this.asteroidDamageOwnerById.get(a.id))
         }
       }
     }
@@ -779,10 +903,13 @@ export class GameRoom {
     return undefined
   }
 
-  private destroyAsteroidAtIndex(index: number): void {
+  private destroyAsteroidAtIndex(index: number, killerOwnerId?: string): void {
     const a = this.asteroids[index]
     if (a === undefined) return
     this.emitEvent('EXPLOSION', [a.pos[0], a.pos[1], a.pos[2]], ASTEROID_TIERS[a.size].radius / 3)
+    if (killerOwnerId !== undefined) {
+      this.awardScore(killerOwnerId, ASTEROID_TIERS[a.size].score)
+    }
     const children = fragmentAsteroid(a, this.idSeq, this.rng)
     // swap-remove asteroid
     this.asteroids[index] = this.asteroids[this.asteroids.length - 1]!
@@ -821,7 +948,7 @@ export class GameRoom {
         const t = this.hitScratch.t
         this.emitEvent('HIT', [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t], 0.7)
         if (e.hp <= 0) {
-          this.killEnemyAtIndex(ei)
+          this.killEnemyAtIndex(ei, p.ownerId)
         }
         hit = true
         break
@@ -829,6 +956,68 @@ export class GameRoom {
       if (hit) {
         this.projectiles[pi] = this.projectiles[this.projectiles.length - 1]!
         this.projectiles.length -= 1
+      }
+    }
+  }
+
+  private resolveLaserVsEnemyMissileCollisions(): void {
+    this.deadProjectileIds.clear()
+    this.projectileDamageById.clear()
+
+    for (let pi = 0; pi < this.projectiles.length; pi++) {
+      const p = this.projectiles[pi]
+      if (p === undefined) continue
+      if (p.kind !== 'LASER') continue
+      if (p.ownerId.startsWith('enemy:')) continue
+      if (this.deadProjectileIds.has(p.id)) continue
+
+      const ax = p.prevPos[0], ay = p.prevPos[1], az = p.prevPos[2]
+      const bx = p.pos[0], by = p.pos[1], bz = p.pos[2]
+
+      for (let mi = 0; mi < this.projectiles.length; mi++) {
+        if (mi === pi) continue
+        const m = this.projectiles[mi]
+        if (m === undefined) continue
+        if (m.kind !== 'MISSILE') continue
+        if (!m.ownerId.startsWith('enemy:')) continue
+        if (!(m.hp !== undefined && m.hp > 0)) continue
+
+        const r = PROJECTILE_RADIUS + 1.5
+        sweptSegmentSphere(ax, ay, az, bx, by, bz, m.pos[0], m.pos[1], m.pos[2], r, this.hitScratch)
+        if (!this.hitScratch.hit) continue
+
+        this.deadProjectileIds.add(p.id)
+        const prev = this.projectileDamageById.get(m.id) ?? 0
+        this.projectileDamageById.set(m.id, prev + PLAYER_PROJECTILE_DAMAGE_LASER)
+        const t = this.hitScratch.t
+        this.emitEvent('HIT', [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t], 0.5)
+        break
+      }
+    }
+
+    if (this.projectileDamageById.size > 0) {
+      for (let i = this.projectiles.length - 1; i >= 0; i--) {
+        const m = this.projectiles[i]
+        if (m === undefined) continue
+        const dmg = this.projectileDamageById.get(m.id)
+        if (dmg === undefined) continue
+        if (m.hp === undefined) continue
+        m.hp -= dmg
+        if (m.hp <= 0) {
+          this.emitEvent('EXPLOSION', [m.pos[0], m.pos[1], m.pos[2]], 0.6)
+          this.projectiles[i] = this.projectiles[this.projectiles.length - 1]!
+          this.projectiles.length -= 1
+        }
+      }
+    }
+
+    if (this.deadProjectileIds.size > 0) {
+      for (let i = this.projectiles.length - 1; i >= 0; i--) {
+        const p = this.projectiles[i]
+        if (p !== undefined && this.deadProjectileIds.has(p.id)) {
+          this.projectiles[i] = this.projectiles[this.projectiles.length - 1]!
+          this.projectiles.length -= 1
+        }
       }
     }
   }
@@ -888,11 +1077,14 @@ export class GameRoom {
     ship.invulnTimer = WORLD_CONFIG.SPAWN_INVULN_SEC
   }
 
-  private killEnemyAtIndex(index: number): void {
+  private killEnemyAtIndex(index: number, killerOwnerId?: string): void {
     const enemy = this.enemies[index]
     if (enemy === undefined) return
 
     this.emitEvent('EXPLOSION', [enemy.pos[0], enemy.pos[1], enemy.pos[2]], 1.2)
+    if (killerOwnerId !== undefined) {
+      this.awardScore(killerOwnerId, ENEMY_ARCHETYPES[enemy.archetype].score)
+    }
     if (enemy.archetype === 'SCAVENGER') {
       const drops = createScavengerDeathDrops(enemy, () => this.idSeq.next())
       for (let i = 0; i < drops.length; i++) {
