@@ -1,6 +1,6 @@
 import { ASTEROID_TIERS, ENEMY_ARCHETYPES, SHIP_CONFIG, WAVE_SPAWN_CONFIG, WORLD_CONFIG } from '../constants'
 import { CollisionEventBuffer, PROJECTILE_RADIUS, resolveProjectileAsteroidCollisions, resolveShipAsteroidCollisions } from '../collision'
-import { clamp, isFiniteNumber } from '../math'
+import { clamp, isFiniteNumber, sweptSegmentSphere, type HitResult } from '../math'
 import { FIXED_DT, stepShip } from '../physics'
 import type {
   AsteroidSize,
@@ -153,20 +153,21 @@ function distSq(ax: number, ay: number, az: number, bx: number, by: number, bz: 
   return dx * dx + dy * dy + dz * dz
 }
 
-function forwardFromRot(rot: readonly [number, number, number, number]): [number, number, number] {
+function forwardFromRot(rot: readonly [number, number, number, number], out: [number, number, number]): [number, number, number] {
   let qx = finiteOr(rot[0], 0)
   let qy = finiteOr(rot[1], 0)
   let qz = finiteOr(rot[2], 0)
   let qw = finiteOr(rot[3], 1)
   const ql = Math.hypot(qx, qy, qz, qw)
-  if (ql <= 1e-9) return [0, 0, -1]
+  if (ql <= 1e-9) { out[0] = 0; out[1] = 0; out[2] = -1; return out }
   qx /= ql; qy /= ql; qz /= ql; qw /= ql
   const fx = -2 * qx * qz - 2 * qw * qy
   const fy = -2 * qy * qz + 2 * qw * qx
   const fz = -1 + 2 * qx * qx + 2 * qy * qy
   const fl = Math.hypot(fx, fy, fz)
-  if (fl <= 1e-9) return [0, 0, -1]
-  return [fx / fl, fy / fl, fz / fl]
+  if (fl <= 1e-9) { out[0] = 0; out[1] = 0; out[2] = -1; return out }
+  out[0] = fx / fl; out[1] = fy / fl; out[2] = fz / fl
+  return out
 }
 
 function makeEmptyCmd(tick: number): ShipCommand {
@@ -186,7 +187,7 @@ function makeEmptyCmd(tick: number): ShipCommand {
 
 export class GameRoom {
   private readonly rng: Rng
-  private readonly idSeq = new IdSeq(1)
+  private idSeq = new IdSeq(1)
   private readonly waveManager = new WaveManager()
   private readonly collisionBuffer = new CollisionEventBuffer(512)
   private readonly enemyIntents: EnemyIntent[] = []
@@ -195,6 +196,12 @@ export class GameRoom {
   private readonly shipPrevVel: [number, number, number][] = []
   private readonly shipSweep: ShipState[] = []
   private readonly autoWaves: boolean
+  private readonly forwardScratch: [number, number, number] = [0, 0, -1]
+  private readonly hitScratch: HitResult = { hit: false, t: 0, nx: 0, ny: 0, nz: 0 }
+
+  readonly snapshotIntervalTicks = WORLD_CONFIG.FIXED_TICK_RATE / WORLD_CONFIG.NETWORK_BROADCAST_RATE
+  private snapshotAccum = 0
+  private snapshotDue = false
 
   private tick = 0
   private readonly ships: ShipState[] = []
@@ -235,10 +242,15 @@ export class GameRoom {
     this.shipSweep.push(copyShip(ship))
 
     if (Array.isArray(opts.initialAsteroids)) {
+      let maxId = 0
       for (let i = 0; i < opts.initialAsteroids.length; i++) {
         const a = opts.initialAsteroids[i]
-        if (a !== undefined) this.asteroids.push(copyAsteroid(a))
+        if (a !== undefined) {
+          this.asteroids.push(copyAsteroid(a))
+          if (Number.isFinite(a.id) && a.id > maxId) maxId = Math.trunc(a.id)
+        }
       }
+      if (maxId >= 1) this.idSeq = new IdSeq(maxId + 1)
     }
 
     const initialWave = Number.isFinite(opts.initialWave) ? Math.max(0, Math.trunc(opts.initialWave as number)) : 1
@@ -330,9 +342,19 @@ export class GameRoom {
     this.stepWave()
 
     this.tick += 1
+    this.snapshotAccum += 1
+    if (this.snapshotAccum + 1e-9 >= this.snapshotIntervalTicks) {
+      this.snapshotDue = true
+      this.snapshotAccum -= this.snapshotIntervalTicks
+    }
+  }
+
+  shouldEmitSnapshot(): boolean {
+    return this.snapshotDue
   }
 
   createSnapshot(): ServerMessage {
+    this.snapshotDue = false
     const ships: ShipState[] = new Array(this.ships.length)
     for (let i = 0; i < this.ships.length; i++) ships[i] = copyShip(this.ships[i]!)
 
@@ -435,7 +457,10 @@ export class GameRoom {
       ship.energy = clamp(ship.energy - SHIP_CONFIG.BOOST_DRAIN_RATE * FIXED_DT, 0, SHIP_CONFIG.MAX_ENERGY)
     }
 
-    const [fx, fy, fz] = forwardFromRot(ship.rot)
+    forwardFromRot(ship.rot, this.forwardScratch)
+    const fx = this.forwardScratch[0]
+    const fy = this.forwardScratch[1]
+    const fz = this.forwardScratch[2]
     const muzzleOffset = SHIP_CONFIG.RADIUS + 0.5
 
     if (cmd.firePrimary && rt.primaryCooldown <= 0) {
@@ -575,7 +600,10 @@ export class GameRoom {
     if (cd > 0) return
     // Fire burst of 2
     const burst = intent.primaryBurstCount > 0 ? intent.primaryBurstCount : ENEMY_ARCHETYPES.SCOUT.primaryBurstCount
-    const [fx, fy, fz] = forwardFromRot(enemy.rot)
+    forwardFromRot(enemy.rot, this.forwardScratch)
+    const fx = this.forwardScratch[0]
+    const fy = this.forwardScratch[1]
+    const fz = this.forwardScratch[2]
     for (let b = 0; b < burst; b++) {
       // slight spread in time? At same tick spawn same direction; acceptable for M4.
       this.spawnProjectile(`enemy:${enemy.id}`, 'ENEMY_PLASMA', enemy.pos, fx, fy, fz, ENEMY_ARCHETYPES.SCOUT.projectileSpeed, ENEMY_PLASMA_TTL, 3.0)
@@ -586,8 +614,8 @@ export class GameRoom {
   private enemyTryFireBruiser(enemy: EnemyState, _timeSec: number): void {
     const cd = this.enemyCooldowns.get(enemy.id) ?? 0
     if (cd > 0) return
-    const [fx, fy, fz] = forwardFromRot(enemy.rot)
-    this.spawnProjectile(`enemy:${enemy.id}`, 'MISSILE', enemy.pos, fx, fy, fz, ENEMY_ARCHETYPES.BRUISER.missileSpeed, MISSILE_TTL, 4.0)
+    forwardFromRot(enemy.rot, this.forwardScratch)
+    this.spawnProjectile(`enemy:${enemy.id}`, 'MISSILE', enemy.pos, this.forwardScratch[0], this.forwardScratch[1], this.forwardScratch[2], ENEMY_ARCHETYPES.BRUISER.missileSpeed, MISSILE_TTL, 4.0)
     this.enemyCooldowns.set(enemy.id, SHIP_CONFIG.SECONDARY_COOLDOWN)
   }
 
@@ -647,16 +675,26 @@ export class GameRoom {
       const prev = this.shipPrevPos[i]
       const sweep = this.shipSweep[i]
       if (s === undefined || prev === undefined || sweep === undefined) continue
-      // Apply damage/shield/vel back. Invuln prevents damage but keeps bounce.
+      // Preserve stepShip integration; apply only collision bounce delta + minimal separation.
       if (s.invulnTimer > 0) {
         sweep.shield = s.shield
       }
       s.shield = sweep.shield
-      // bounced velocity: sweep.vel has been modified by resolver
-      s.vel[0] = sweep.vel[0]; s.vel[1] = sweep.vel[1]; s.vel[2] = sweep.vel[2]
-      s.pos[0] = prev[0] + s.vel[0] * FIXED_DT
-      s.pos[1] = prev[1] + s.vel[1] * FIXED_DT
-      s.pos[2] = prev[2] + s.vel[2] * FIXED_DT
+
+      const dispVx = (s.pos[0] - prev[0]) / FIXED_DT
+      const dispVy = (s.pos[1] - prev[1]) / FIXED_DT
+      const dispVz = (s.pos[2] - prev[2]) / FIXED_DT
+      const dvx = sweep.vel[0] - dispVx
+      const dvy = sweep.vel[1] - dispVy
+      const dvz = sweep.vel[2] - dispVz
+
+      // Apply bounce delta on top of stepShip result (preserves accel/drag integration).
+      s.vel[0] += dvx
+      s.vel[1] += dvy
+      s.vel[2] += dvz
+      s.pos[0] += dvx * FIXED_DT
+      s.pos[1] += dvy * FIXED_DT
+      s.pos[2] += dvz * FIXED_DT
 
       if (s.shield <= 0 && s.alive) {
         this.killShip(s)
@@ -748,21 +786,25 @@ export class GameRoom {
       const isPlayerProjectile = p.kind === 'LASER' || (p.kind === 'MISSILE' && !p.ownerId.startsWith('enemy:'))
       if (!isPlayerProjectile) continue
 
+      const ax = p.prevPos[0], ay = p.prevPos[1], az = p.prevPos[2]
+      const bx = p.pos[0], by = p.pos[1], bz = p.pos[2]
+
       let hit = false
       for (let ei = this.enemies.length - 1; ei >= 0; ei--) {
         const e = this.enemies[ei]
         if (e === undefined) continue
         const r = this.enemyRadius(e.archetype) + PROJECTILE_RADIUS
-        if (distSq(p.pos[0], p.pos[1], p.pos[2], e.pos[0], e.pos[1], e.pos[2]) <= r * r) {
-          const dmg = p.kind === 'MISSILE' ? PLAYER_PROJECTILE_DAMAGE_MISSILE : PLAYER_PROJECTILE_DAMAGE_LASER
-          e.hp -= dmg
-          this.emitEvent('HIT', [p.pos[0], p.pos[1], p.pos[2]], 0.7)
-          if (e.hp <= 0) {
-            this.killEnemyAtIndex(ei)
-          }
-          hit = true
-          break
+        sweptSegmentSphere(ax, ay, az, bx, by, bz, e.pos[0], e.pos[1], e.pos[2], r, this.hitScratch)
+        if (!this.hitScratch.hit) continue
+        const dmg = p.kind === 'MISSILE' ? PLAYER_PROJECTILE_DAMAGE_MISSILE : PLAYER_PROJECTILE_DAMAGE_LASER
+        e.hp -= dmg
+        const t = this.hitScratch.t
+        this.emitEvent('HIT', [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t], 0.7)
+        if (e.hp <= 0) {
+          this.killEnemyAtIndex(ei)
         }
+        hit = true
+        break
       }
       if (hit) {
         this.projectiles[pi] = this.projectiles[this.projectiles.length - 1]!
@@ -772,12 +814,15 @@ export class GameRoom {
   }
 
   private resolveProjectileShipCollisions(): void {
-    // Enemy projectiles hitting alive players
+    // Enemy projectiles hitting alive players (swept to avoid tunneling)
     for (let pi = this.projectiles.length - 1; pi >= 0; pi--) {
       const p = this.projectiles[pi]
       if (p === undefined) continue
       const isEnemyProjectile = p.kind === 'ENEMY_PLASMA' || (p.kind === 'MISSILE' && p.ownerId.startsWith('enemy:'))
       if (!isEnemyProjectile) continue
+
+      const ax = p.prevPos[0], ay = p.prevPos[1], az = p.prevPos[2]
+      const bx = p.pos[0], by = p.pos[1], bz = p.pos[2]
 
       let hit = false
       for (let si = 0; si < this.ships.length; si++) {
@@ -785,14 +830,15 @@ export class GameRoom {
         if (s === undefined || !s.alive) continue
         if (s.invulnTimer > 0) continue
         const r = SHIP_CONFIG.RADIUS + PROJECTILE_RADIUS
-        if (distSq(p.pos[0], p.pos[1], p.pos[2], s.pos[0], s.pos[1], s.pos[2]) <= r * r) {
-          const dmg = p.kind === 'MISSILE' ? 35 : 12
-          s.shield = Math.max(0, s.shield - dmg)
-          this.emitEvent('HIT', [p.pos[0], p.pos[1], p.pos[2]], 0.8)
-          if (s.shield <= 0) this.killShip(s)
-          hit = true
-          break
-        }
+        sweptSegmentSphere(ax, ay, az, bx, by, bz, s.pos[0], s.pos[1], s.pos[2], r, this.hitScratch)
+        if (!this.hitScratch.hit) continue
+        const t = this.hitScratch.t
+        const dmg = p.kind === 'MISSILE' ? 35 : 12
+        s.shield = Math.max(0, s.shield - dmg)
+        this.emitEvent('HIT', [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t], 0.8)
+        if (s.shield <= 0) this.killShip(s)
+        hit = true
+        break
       }
       if (hit) {
         this.projectiles[pi] = this.projectiles[this.projectiles.length - 1]!
